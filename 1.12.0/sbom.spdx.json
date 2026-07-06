@@ -1,0 +1,44 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "spdxVersion": "SPDX-2.3",
+  "name": "SBOM-SPDX-tamarin-prover-1.12.0",
+  "creationInfo": {
+    "created": "2026-03-07T13:21:04Z",
+    "creators": [
+      "Tool: https://github.com/Homebrew/brew"
+    ]
+  },
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://formulae.brew.sh/spdx/tamarin-prover-1.12.0.json",
+  "documentDescribes": [
+    "SPDXRef-Archive-tamarin-prover-src"
+  ],
+  "files": [],
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Archive-tamarin-prover-src",
+      "name": "tamarin-prover",
+      "versionInfo": "1.12.0",
+      "filesAnalyzed": false,
+      "licenseDeclared": "NOASSERTION",
+      "builtDate": "2026-03-07 13:21:04 UTC",
+      "licenseConcluded": "NOASSERTION",
+      "downloadLocation": "https://github.com/tamarin-prover/tamarin-prover/archive/refs/tags/1.12.0.tar.gz",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "35f0262e770db3632fcb297deb6ecc2d7c724c693fecfe97892e8224fa161956"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-File-tamarin-prover",
+      "relationshipType": "PACKAGE_OF",
+      "relatedSpdxElement": "SPDXRef-Archive-tamarin-prover-src"
+    }
+  ]
+}

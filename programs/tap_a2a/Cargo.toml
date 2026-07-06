@@ -1,0 +1,23 @@
+[package]
+name = "tap_a2a"
+version = "0.1.0"
+description = "Created with Anchor"
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "tap_a2a"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+
+
+[dependencies]
+anchor-lang = "0.31.1"
+

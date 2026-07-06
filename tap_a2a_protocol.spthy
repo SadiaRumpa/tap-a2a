@@ -1,0 +1,87 @@
+theory TAP_A2A_Protocol
+begin
+
+// =========================================================================
+// BUILTINS & FUNCTIONS (Dolev-Yao Network + Cryptography)
+// =========================================================================
+builtins: signing, diffie-hellman
+
+// =========================================================================
+// RULES: Protocol Workflow & Blockchain State
+// =========================================================================
+
+// 1. Agent Registration (Trusted Setup on Blockchain B)
+// The agent generates a keypair and registers. Blockchain records them as 'active'.
+rule Register_Agent:
+    [ Fr(~skA) ]
+    -->
+    [ AgentHasKey(pk(~skA), ~skA),
+      BlockchainState(pk(~skA), 'active', 'read') ]
+
+// 2. Policy Update (Authority sets scope on-chain)
+rule Set_Policy:
+    [ BlockchainState(pkA, 'active', _), Fr(~newScope) ]
+    -->
+    [ BlockchainState(pkA, 'active', ~newScope) ]
+
+// 3. Agent Revocation (State transition on B)
+rule Revoke_Agent:
+    [ BlockchainState(pkA, 'active', Scope) ]
+    -->
+    [ BlockchainState(pkA, 'revoked', Scope) ]
+
+// 4. Agent Access Request Generation
+// Agent signs a payload containing a fresh nonce (for replay resistance)
+rule Agent_Request:
+    [ AgentHasKey(pkA, skA),
+      Fr(nonce) ]
+    --[ AgentInitiated(pkA, nonce) ]->
+    [ Out(<'request', pkA, nonce, sign(<'request', pkA, nonce>, skA)>) ]
+
+// 5. Gateway Verification & Enforcement
+// Gateway receives message, verifies signature, and checks trusted BlockchainState
+rule Gateway_Verify:
+    [ BlockchainState(pkA, Status, Scope),
+      In(<'request', pkA, nonce, sig>) ]
+    --[ GatewayChecked(pkA, Status, nonce, 
+          if verify(sig, <'request', pkA, nonce>, pkA) then 'valid' else 'invalid') ]->
+    [ ]
+
+// =========================================================================
+// LEMMAS: Security Properties to Prove
+// =========================================================================
+
+// LEMMA 1: Authentication Correctness
+// If the Gateway verifies a valid signature, the request MUST have been initiated by that agent.
+lemma Authentication_Correctness:
+    "All pkA nonce sig #j.
+        GatewayChecked(pkA, Status, nonce, 'valid') @ #j
+        & sig = sign(<'request', pkA, nonce>, skA)
+        ==>
+        (Ex #i. AgentInitiated(pkA, nonce) @ #i & #i < #j)"
+
+// LEMMA 2: Replay Resistance
+// A valid verification event MUST be associated with a fresh nonce. The attacker cannot reuse an old nonce.
+lemma Replay_Resistance:
+    "All pkA nonce sig #j #k.
+        GatewayChecked(pkA, Status, nonce, 'valid') @ #j &
+        GatewayChecked(pkA, Status, nonce, 'valid') @ #k
+        ==> #j = #k"
+
+// LEMMA 3: Revocation Integrity
+// If an agent is revoked on the blockchain, the Gateway's state check will reflect 'revoked'.
+lemma Revocation_Integrity:
+    "All pkA Status Scope nonce #j.
+        GatewayChecked(pkA, Status, nonce, 'valid') @ #j
+        ==>
+        (Ex #k. BlockchainState(pkA, Status, Scope) @ #k & #k <= #j)"
+
+// LEMMA 4: Impersonation Resistance
+// An attacker cannot forge a valid signature without compromising the private key.
+lemma Impersonation_Resistance:
+    "All pkA nonce sig #j.
+        GatewayChecked(pkA, Status, nonce, 'valid') @ #j
+        ==>
+        not (Ex skA. Reveal_sk(skA) @ #r & pkA = pk(skA) & #r < #j)"
+
+end

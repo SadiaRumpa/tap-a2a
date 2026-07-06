@@ -1,0 +1,65 @@
+[
+  {
+    "timestamp": 1783332858,
+    "datetime": "2026-07-06T11:14:18",
+    "agent_pubkey": "6sw44aFAvz3vFR4y93Swkp1erQ5fm1Qbq8Ub6WdjKzbj",
+    "resource_id": "protected_database_1",
+    "action": "read",
+    "decision": "DENIED",
+    "reason": "NOT_REGISTERED"
+  },
+  {
+    "timestamp": 1783332859,
+    "datetime": "2026-07-06T11:14:19",
+    "agent_pubkey": "6sw44aFAvz3vFR4y93Swkp1erQ5fm1Qbq8Ub6WdjKzbj",
+    "resource_id": "protected_database_1",
+    "action": "write",
+    "decision": "DENIED",
+    "reason": "NOT_REGISTERED"
+  },
+  {
+    "timestamp": 1783332859,
+    "datetime": "2026-07-06T11:14:19",
+    "agent_pubkey": "MrPWDLks9uVYbk8Xx3fDpBpuLMtsiuwUz2AGJGyw7bf",
+    "resource_id": "protected_database_1",
+    "action": "write",
+    "decision": "DENIED",
+    "reason": "NOT_REGISTERED"
+  },
+  {
+    "timestamp": 1783332259,
+    "datetime": "2026-07-06T11:04:19",
+    "agent_pubkey": "6sw44aFAvz3vFR4y93Swkp1erQ5fm1Qbq8Ub6WdjKzbj",
+    "resource_id": "protected_database_1",
+    "action": "read",
+    "decision": "DENIED",
+    "reason": "REPLAY_ATTACK (Timestamp too old)"
+  },
+  {
+    "timestamp": 1783332859,
+    "datetime": "2026-07-06T11:14:19",
+    "agent_pubkey": "6sw44aFAvz3vFR4y93Swkp1erQ5fm1Qbq8Ub6WdjKzbj",
+    "resource_id": "protected_database_1",
+    "action": "read",
+    "decision": "DENIED",
+    "reason": "INVALID_SIGNATURE"
+  },
+  {
+    "timestamp": 1783332859,
+    "datetime": "2026-07-06T11:14:19",
+    "agent_pubkey": "8xKgjkkG4vRU1WCYjmDMf8tvBSZuj1NKgsFks9PYr4pA",
+    "resource_id": "protected_database_1",
+    "action": "read",
+    "decision": "DENIED",
+    "reason": "NOT_REGISTERED"
+  },
+  {
+    "timestamp": 1783332859,
+    "datetime": "2026-07-06T11:14:19",
+    "agent_pubkey": "4hKbQYsGcUCXjg1ggwG7PBFbZGJR7rrqQBtyqVutt63j",
+    "resource_id": "protected_database_1",
+    "action": "read",
+    "decision": "DENIED",
+    "reason": "NOT_REGISTERED"
+  }
+]
