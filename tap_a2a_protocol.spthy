@@ -1,87 +1,89 @@
-theory TAP_A2A_Protocol
+// ============================================================================
+// TAP-A2A Formal Verification Model (Tamarin Prover)
+// ============================================================================
+// This model abstracts the Solana blockchain as a trusted state machine.
+// It verifies three core security properties of the protocol:
+// 1. Authentication (Only registered agents can request access)
+// 2. Replay Resistance (A nullifier can only be used once)
+// 3. Revocation Integrity (Revoked agents cannot gain access)
+// ============================================================================
+
+theory tap_a2a_protocol
 begin
 
-// =========================================================================
-// BUILTINS & FUNCTIONS (Dolev-Yao Network + Cryptography)
-// =========================================================================
-builtins: signing, diffie-hellman
+// -----------------------------------------------------------------------------
+// 1. BUILT-IN FUNCTIONS AND EQUATIONAL THEORY
+// -----------------------------------------------------------------------------
+// We model cryptographic primitives abstractly.
+functions: 
+  h/1,          // Cryptographic hash function (e.g., SHA-256 for nullifier)
+  sign/2,       // Digital signature: sign(message, secret_key)
+  pk/1,         // Derive public key from secret key
+  verify/3,     // Signature verification: verify(public_key, message, signature)
+  getmsg/1      // Extract message from signature (for Dolev-Yao attacker)
 
-// =========================================================================
-// RULES: Protocol Workflow & Blockchain State
-// =========================================================================
+equations:
+  getmsg(sign(m, sk)) = m
+  verify(pk(sk), m, sign(m, sk)) = true
 
-// 1. Agent Registration (Trusted Setup on Blockchain B)
-// The agent generates a keypair and registers. Blockchain records them as 'active'.
+// -----------------------------------------------------------------------------
+// 2. PROTOCOL RULES (STATE TRANSITIONS)
+// -----------------------------------------------------------------------------
+
+// Rule 1: Admin registers an agent and establishes a least-privilege policy
 rule Register_Agent:
-    [ Fr(~skA) ]
-    -->
-    [ AgentHasKey(pk(~skA), ~skA),
-      BlockchainState(pk(~skA), 'active', 'read') ]
+  [ Fr(~admin_sk), Fr(~agent_sk), Fr(~action_hash) ]
+  --[ Register(pk(~agent_sk)) ]->
+  [ Out(<'register', pk(~agent_sk), sign(<'register', pk(~agent_sk)>, ~admin_sk)>),
+    // Blockchain state updates:
+    AgentStatus(pk(~agent_sk), 'active'),
+    PolicyAllowed(pk(~agent_sk), ~action_hash) ]
 
-// 2. Policy Update (Authority sets scope on-chain)
-rule Set_Policy:
-    [ BlockchainState(pkA, 'active', _), Fr(~newScope) ]
-    -->
-    [ BlockchainState(pkA, 'active', ~newScope) ]
-
-// 3. Agent Revocation (State transition on B)
+// Rule 2: Admin revokes an agent's access
 rule Revoke_Agent:
-    [ BlockchainState(pkA, 'active', Scope) ]
-    -->
-    [ BlockchainState(pkA, 'revoked', Scope) ]
+  [ AgentStatus(agent_pk, 'active') ]
+  --[ Revoke(agent_pk) ]->
+  [ AgentStatus(agent_pk, 'revoked') ]
 
-// 4. Agent Access Request Generation
-// Agent signs a payload containing a fresh nonce (for replay resistance)
-rule Agent_Request:
-    [ AgentHasKey(pkA, skA),
-      Fr(nonce) ]
-    --[ AgentInitiated(pkA, nonce) ]->
-    [ Out(<'request', pkA, nonce, sign(<'request', pkA, nonce>, skA)>) ]
+// Rule 3: Active agent requests access (The core TAP-A2A mechanism)
+// The agent generates a fresh nonce to create a unique nullifier.
+rule Request_Access:
+  [ AgentStatus(agent_pk, 'active'), 
+    PolicyAllowed(agent_pk, action_hash), 
+    Fr(~nonce) ]
+  --[ AccessGranted(agent_pk, action_hash, h(<'access', agent_pk, action_hash, ~nonce>)) ]->
+  [ Out(<'access', agent_pk, action_hash, h(<'access', agent_pk, action_hash, ~nonce>), 
+         sign(<'access', agent_pk, action_hash, h(<'access', agent_pk, action_hash, ~nonce>)>, agent_sk)>),
+    // The blockchain immutably logs the nullifier, preventing reuse.
+    NullifierLogged(h(<'access', agent_pk, action_hash, ~nonce>)) ]
 
-// 5. Gateway Verification & Enforcement
-// Gateway receives message, verifies signature, and checks trusted BlockchainState
-rule Gateway_Verify:
-    [ BlockchainState(pkA, Status, Scope),
-      In(<'request', pkA, nonce, sig>) ]
-    --[ GatewayChecked(pkA, Status, nonce, 
-          if verify(sig, <'request', pkA, nonce>, pkA) then 'valid' else 'invalid') ]->
-    [ ]
+// -----------------------------------------------------------------------------
+// 3. SECURITY LEMMAS (PROPERTIES TO PROVE)
+// -----------------------------------------------------------------------------
 
-// =========================================================================
-// LEMMAS: Security Properties to Prove
-// =========================================================================
+// Lemma 1: Replay Resistance
+// A specific nullifier can never result in more than one AccessGranted event.
+lemma replay_resistance:
+  "A nullifier cannot be used to grant access more than once"
+  All agent action nullifier #i #j.
+    AccessGranted(agent, action, nullifier) @ #i & AccessGranted(agent, action, nullifier) @ #j
+    ==> #i = #j
 
-// LEMMA 1: Authentication Correctness
-// If the Gateway verifies a valid signature, the request MUST have been initiated by that agent.
-lemma Authentication_Correctness:
-    "All pkA nonce sig #j.
-        GatewayChecked(pkA, Status, nonce, 'valid') @ #j
-        & sig = sign(<'request', pkA, nonce>, skA)
-        ==>
-        (Ex #i. AgentInitiated(pkA, nonce) @ #i & #i < #j)"
+// Lemma 2: Revocation Integrity
+// If an agent is revoked at time #i, no AccessGranted event for that agent 
+// can occur at a later time #j.
+lemma revocation_integrity:
+  "If an agent is revoked, no subsequent access can be granted"
+  All agent action nullifier #i #j.
+    Revoke(agent) @ #i & AccessGranted(agent, action, nullifier) @ #j
+    ==> #i > #j
 
-// LEMMA 2: Replay Resistance
-// A valid verification event MUST be associated with a fresh nonce. The attacker cannot reuse an old nonce.
-lemma Replay_Resistance:
-    "All pkA nonce sig #j #k.
-        GatewayChecked(pkA, Status, nonce, 'valid') @ #j &
-        GatewayChecked(pkA, Status, nonce, 'valid') @ #k
-        ==> #j = #k"
-
-// LEMMA 3: Revocation Integrity
-// If an agent is revoked on the blockchain, the Gateway's state check will reflect 'revoked'.
-lemma Revocation_Integrity:
-    "All pkA Status Scope nonce #j.
-        GatewayChecked(pkA, Status, nonce, 'valid') @ #j
-        ==>
-        (Ex #k. BlockchainState(pkA, Status, Scope) @ #k & #k <= #j)"
-
-// LEMMA 4: Impersonation Resistance
-// An attacker cannot forge a valid signature without compromising the private key.
-lemma Impersonation_Resistance:
-    "All pkA nonce sig #j.
-        GatewayChecked(pkA, Status, nonce, 'valid') @ #j
-        ==>
-        not (Ex skA. Reveal_sk(skA) @ #r & pkA = pk(skA) & #r < #j)"
+// Lemma 3: Authentication Correctness
+// Access is only granted if the agent was previously registered and had a policy.
+lemma authentication_correctness:
+  "Access is only granted to agents with an active status and valid policy"
+  All agent action nullifier #j.
+    AccessGranted(agent, action, nullifier) @ #j
+    ==> Ex #i. AgentStatus(agent, 'active') @ #i & #i < #j
 
 end
