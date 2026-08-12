@@ -18,7 +18,8 @@ from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Commitment
 
 from tap_a2a_common import (
-    RPC_URL, config_pda, classify_error, ix_initialize,
+    RPC_URL, CLOCK_SYSVAR, CLOCK_UNIX_TIMESTAMP_OFFSET,
+    config_pda, classify_error, ix_initialize, set_clock_offset,
 )
 
 # ----------------------------------------------------------------------
@@ -81,6 +82,35 @@ async def send(client: AsyncClient, instruction, signers, label: str = None):
         print(f"    [{label}] Latency: {latency_ms:.2f} ms | CUs: {cus}")
     return sig, latency_ms, cus
 
+
+
+async def sync_clock(client) -> float:
+    """
+    Align this process's notion of the epoch with the chain's.
+
+    Reads the Clock sysvar and records the difference from local wall
+    time. Every subsequent current_epoch() call then returns the epoch the
+    PROGRAM will compute, not the one this machine's clock suggests.
+
+    This matters on a long-running solana-test-validator, whose clock
+    advances with slot progression and falls behind real time. Without
+    this, a client eventually computes an epoch one ahead of the chain's
+    and every request is rejected with InvalidEpoch -- the on-chain grace
+    window tolerates a client that is behind, not one that is ahead.
+
+    Returns the offset in seconds; a large negative value means the
+    validator is lagging and is worth reporting in any results file.
+    """
+    info = await client.get_account_info(CLOCK_SYSVAR)
+    if info.value is None:
+        return 0.0
+    data = bytes(info.value.data)
+    chain_time = int.from_bytes(
+        data[CLOCK_UNIX_TIMESTAMP_OFFSET:CLOCK_UNIX_TIMESTAMP_OFFSET + 8],
+        "little", signed=True)
+    offset = chain_time - time.time()
+    set_clock_offset(offset)
+    return offset
 
 async def ensure_initialized(client: AsyncClient, program_id, admin: Keypair) -> bool:
     """

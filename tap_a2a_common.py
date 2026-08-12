@@ -32,6 +32,12 @@ from solders.pubkey import Pubkey
 
 RPC_URL = "http://127.0.0.1:8899"
 
+# Solana's Clock sysvar. Layout: slot(8) epoch_start_timestamp(8)
+# epoch(8) leader_schedule_epoch(8) unix_timestamp(8) -- so the wall
+# clock the program sees sits at byte offset 32.
+CLOCK_SYSVAR = Pubkey.from_string("SysvarC1ock11111111111111111111111111111111")
+CLOCK_UNIX_TIMESTAMP_OFFSET = 32
+
 # Must equal EPOCH_SECONDS in lib.rs.
 EPOCH_SECONDS = 3600
 
@@ -103,8 +109,31 @@ def generate_bytes32() -> list:
 # linkable/traceable ring signature with the key image derived from the
 # secret key and a membership proof verified on-chain.
 # ----------------------------------------------------------------------
+# Offset between this machine's wall clock and the chain's clock, in
+# seconds. Set by tap_a2a_client.sync_clock() once per run.
+#
+# WHY THIS EXISTS. lib.rs derives the current epoch from Clock::get(),
+# which on solana-test-validator advances with SLOT PROGRESSION rather
+# than wall time. A validator left running drifts behind real time, and a
+# client computing the epoch from time.time() eventually lands in a
+# different bucket. The on-chain grace window is deliberately asymmetric
+# -- it accepts a client one epoch BEHIND (absorbing propagation delay)
+# but not one AHEAD (which would let an agent pre-compute nullifiers for
+# future epochs) -- so a drifting validator rejects every request with
+# InvalidEpoch. Reading the chain's own clock removes the assumption that
+# the two agree.
+_CLOCK_OFFSET = 0.0
+
+
+def set_clock_offset(offset: float) -> None:
+    global _CLOCK_OFFSET
+    _CLOCK_OFFSET = offset
+
+
 def current_epoch(now: float = None) -> int:
-    return int(now if now is not None else time.time()) // EPOCH_SECONDS
+    """Current access epoch, as the CHAIN would compute it."""
+    t = now if now is not None else time.time() + _CLOCK_OFFSET
+    return int(t) // EPOCH_SECONDS
 
 
 def action_hash(name: str) -> list:

@@ -1,7 +1,6 @@
 TAP-A2A benchmark — 100 iterations
 
-Initialising protocol with admin Cw92kFLvZfPKAoLAkKdyxfPqQQHqYCdKKR1MnogFMwLp...
-Protocol initialised.
+Protocol already initialised (config A5cBnknUC6h24LYMpSXuuEvG9qmcwWdCF1BvXutyxzFP).
 Airdropping 10 SOL to the benchmark agent...
 Registering agent...
 Provisioning 100 action policies (setup, not measured)...
@@ -29,13 +28,14 @@ Commitment level: confirmed
 ========================================================================
 Stage                           Min       Avg       P50       P95       Max
 ------------------------------------------------------------------------
-Ed25519 verify (ms)            0.21      0.32      0.23      0.36      7.33
-Policy read (ms)               2.81      3.38      3.15      4.39      7.78
-On-chain decision (ms)       505.37    613.28    507.01   1010.25   1012.23
-Compute units              14564.00  15899.00  14564.00  19064.00  22064.00
+Ed25519 verify (ms)            0.21      0.34      0.23      0.40      6.82
+Policy read (ms)               2.80      4.04      3.38      6.53     28.72
+On-chain decision (ms)       505.49    605.13    507.16   1011.49   2018.28
+Compute units              14560.00  16135.00  15310.00  20560.00  26560.00
 ========================================================================
 
 Stages are measured independently and are NOT additive.
-On-chain decision latency is commitment-dependent. Re-run with
-TAP_A2A_COMMITMENT=finalized to obtain the irreversibility upper bound.
+On-chain decision latency is commitment-dependent.
+This run measures the ACTIONABLE decision latency at 'confirmed'.
+Re-run with TAP_A2A_COMMITMENT=finalized for the irreversibility bound.
 Raw data written to 'gateway_100_iterations.csv'.

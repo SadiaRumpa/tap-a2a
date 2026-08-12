@@ -21,6 +21,7 @@ RESULTS_DIR="dissertation_results"
 mkdir -p "$RESULTS_DIR"
 
 FAILURES=0
+SKIPS=0
 declare -a SUMMARY
 
 record() {
@@ -33,6 +34,18 @@ record() {
         echo "FAIL: $name (see $RESULTS_DIR/)"
         FAILURES=$((FAILURES + 1))
     fi
+}
+
+# A stage that could not RUN here, as distinct from one that ran and
+# failed. Formal verification is the case in point: Tamarin does not
+# build on every platform, so it is run on Linux and its results are
+# committed. Counting that as a failure would wrongly imply the other
+# stages' results are unsound.
+skip() {
+    local name="$1" reason="$2"
+    SUMMARY+=("  SKIP  $name — $reason")
+    echo "SKIP: $name ($reason)"
+    SKIPS=$((SKIPS + 1))
 }
 
 if [ -d venv ]; then
@@ -152,16 +165,21 @@ if [ -n "$TAMARIN" ] && [ -f tap_a2a.spthy ]; then
         fi
         VERIFY_STATUS=0
     fi
+    record "formal verification" $VERIFY_STATUS
 else
-    echo "  Skipping: Tamarin not available."
+    echo "  Tamarin not available on this machine."
     [ -z "$TAMARIN" ] && echo "    - tamarin-prover not on PATH (set TAMARIN_BIN to override)"
     [ ! -f tap_a2a.spthy ] && echo "    - tap_a2a.spthy not found in $(pwd)"
     echo ""
     echo "  Tamarin does not build on all platforms. The committed results in"
     echo "  $RESULTS_DIR/ were produced with Tamarin 1.12 + Maude 3.1 on Linux;"
     echo "  verify_tap_a2a.py reproduces them anywhere tamarin-prover is on PATH."
+    if [ -s "$RESULTS_DIR/tamarin_results.txt" ]; then
+        skip "formal verification" "run on Linux; results committed in $RESULTS_DIR/tamarin_results.txt"
+    else
+        record "formal verification" 1
+    fi
 fi
-record "formal verification" $VERIFY_STATUS
 
 # ---------------------------------------------------------------------
 # 2. Performance benchmark
@@ -183,6 +201,14 @@ record "security scenarios" $?
 # 4. Agentic orchestration
 # ---------------------------------------------------------------------
 echo ""
+echo "[3b/5] A2A message layer scenarios..."
+python3 a2a_scenario_runner.py > "$RESULTS_DIR/a2a_scenario_results.txt" 2>&1
+record "A2A message layer" $?
+
+echo "[3c/5] Layer bypass and storage experiment..."
+python3 bypass_experiment.py > "$RESULTS_DIR/bypass_experiment_results.txt" 2>&1
+record "layer bypass experiment" $?
+
 echo "[4/5] Agentic orchestration..."
 python3 agentic_orchestrator.py > "$RESULTS_DIR/agentic_orchestration_results.txt" 2>&1
 record "agentic orchestration" $?
@@ -206,6 +232,12 @@ echo ""
 if [ "$FAILURES" -ne 0 ]; then
     echo "$FAILURES stage(s) FAILED. Results in $RESULTS_DIR/ are NOT citable."
     exit 1
+fi
+
+if [ "$SKIPS" -ne 0 ]; then
+    echo "All executed stages passed; $SKIPS stage(s) skipped (see above)."
+    echo "Evidence in $RESULTS_DIR/"
+    exit 0
 fi
 
 echo "All stages passed. Evidence in $RESULTS_DIR/"

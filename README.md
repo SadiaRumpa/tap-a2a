@@ -144,6 +144,11 @@ scenario_runner.py            nine security scenarios
 full_gateway_benchmark.py     latency and compute-unit benchmark
 agentic_orchestrator.py       multi-agent orchestration and prompt-injection test
 gateway.py                    standalone off-chain policy-check reference
+tap_a2a_messaging.py          signed agent-to-agent message layer (objective 3)
+a2a_scenario_runner.py        nine A2A message-layer security scenarios
+bypass_experiment.py          defence-in-depth and trace-storage experiment
+tap_a2a_trs.py                Fujisaki-Suzuki traceable ring signatures
+trs_benchmark.py              ring size vs cost benchmark
 generate_graphs.py            figures from benchmark CSV
 tap_a2a.spthy                 Tamarin model
 verify_tap_a2a.py             verification + ablation runner
@@ -167,6 +172,12 @@ and the file documents each correspondence.
 - **Scope.** W3C DIDs and Verifiable Credentials are out of scope for this
   prototype by agreement with the supervisor. Identity binding uses Ed25519
   keypairs registered on-chain.
+- **A2A messaging is dispatch, not delegation.** The orchestrator asks a
+  worker to exercise authority the worker already holds under standing
+  policy; it does not grant or forward authority of its own. Capability
+  tokens and a verifiable delegation chain would need on-chain support and
+  are future work. The message layer is also not covered by the Tamarin
+  model, which describes the deployed on-chain protocol.
 - **The nullifier is not a ring signature.** It is a deterministic one-time
   access token derived from public inputs and recomputed on-chain. It provides
   accountability, not anonymity. See the dissertation for the full discussion.

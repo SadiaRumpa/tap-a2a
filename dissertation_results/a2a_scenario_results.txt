@@ -1,0 +1,52 @@
+======================================================================
+TAP-A2A — A2A MESSAGE LAYER SCENARIOS
+======================================================================
+Protocol already initialised (config A5cBnknUC6h24LYMpSXuuEvG9qmcwWdCF1BvXutyxzFP).
+Program: 7Bai6A8ANjhLcGHPWQXExAbPRYZ9jUxtFEzQq3FgDiDK
+
+  orchestrator, reader, writer registered
+  reader -> READ_DATABASE | writer -> WRITE_REPORT
+  (no policy exists for DELETE_RECORDS in any group)
+
+[1] Legitimate dispatch to a worker within its scope
+  PASS: legitimate_dispatch — ACCEPTED: reader executed READ_DATABASE; trace logged on-chain.
+
+[2] Capability outside the receiving worker's scope
+  PASS: capability_outside_scope — REJECTED: 'DELETE_RECORDS' is outside this agent's least-privilege sco
+
+[3] Cross-scope dispatch (reader asked to do writer's job)
+  PASS: cross_scope_dispatch — REJECTED: 'WRITE_REPORT' is outside this agent's least-privilege scope
+
+[4] Forged signature
+  PASS: forged_signature — REJECTED: signature does not verify against the claimed sender.
+
+[5] Sender not registered on-chain
+  PASS: unregistered_sender — REJECTED: sender is not a registered agent on-chain.
+
+[6] Sender revoked on-chain
+  PASS: revoked_sender — REJECTED: sender has been revoked on-chain.
+
+[7] Expired message
+  PASS: expired_message — REJECTED: message expired 1s ago.
+
+[8] Replayed message
+  PASS: replayed_message — REJECTED: nonce already seen
+
+[9] Message addressed to a different agent
+  PASS: misdirected_message — REJECTED: message is addressed to a different agent.
+
+======================================================================
+A2A SCENARIO RESULTS
+======================================================================
+  PASS  legitimate_dispatch
+  PASS  capability_outside_scope
+  PASS  cross_scope_dispatch
+  PASS  forged_signature
+  PASS  unregistered_sender
+  PASS  revoked_sender
+  PASS  expired_message
+  PASS  replayed_message
+  PASS  misdirected_message
+
+9/9 scenarios passed.
+SUITE PASSED.

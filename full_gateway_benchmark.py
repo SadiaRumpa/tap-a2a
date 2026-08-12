@@ -44,7 +44,7 @@ from tap_a2a_common import (
     load_program_id, generate_bytes32, current_epoch,
     agent_pda, policy_pda, ix_register_agent, ix_set_policy, ix_log_access,
 )
-from tap_a2a_client import rpc_client, load_admin, send, ensure_initialized, airdrop, COMMITMENT
+from tap_a2a_client import rpc_client, load_admin, send, ensure_initialized, airdrop, COMMITMENT, sync_clock
 
 ITERATIONS = 100
 
@@ -67,6 +67,7 @@ async def main() -> int:
     async with rpc_client() as client:
         admin = load_admin()
         await ensure_initialized(client, program_id, admin)
+        await sync_clock(client)   # align epochs with the chain's clock
 
         agent = Keypair()
         print("Airdropping 10 SOL to the benchmark agent...")
@@ -159,8 +160,13 @@ async def main() -> int:
                   f"{m['p50']:>10.2f}{m['p95']:>10.2f}{m['max']:>10.2f}")
         print("=" * 72)
         print("\nStages are measured independently and are NOT additive.")
-        print("On-chain decision latency is commitment-dependent. Re-run with")
-        print("TAP_A2A_COMMITMENT=finalized to obtain the irreversibility upper bound.")
+        print("On-chain decision latency is commitment-dependent.")
+        if str(COMMITMENT) == "finalized":
+            print("This run measures the IRREVERSIBILITY upper bound (~31 slots).")
+            print("Re-run without TAP_A2A_COMMITMENT for the actionable-decision latency.")
+        else:
+            print(f"This run measures the ACTIONABLE decision latency at '{COMMITMENT}'.")
+            print("Re-run with TAP_A2A_COMMITMENT=finalized for the irreversibility bound.")
 
         csv_path = f"gateway_{ITERATIONS}_iterations.csv"
         with open(csv_path, "w", newline="") as f:

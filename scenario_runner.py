@@ -31,7 +31,7 @@ from tap_a2a_common import (
     access_nullifier, agent_pda, ix_register_agent, ix_set_policy,
     ix_update_policy, ix_revoke_agent, ix_log_access,
 )
-from tap_a2a_client import rpc_client, load_admin, send, ensure_initialized, airdrop, expect_denied
+from tap_a2a_client import rpc_client, load_admin, send, ensure_initialized, airdrop, expect_denied, sync_clock
 
 
 async def main() -> int:
@@ -47,6 +47,8 @@ async def main() -> int:
         print(f"Admin: {admin.pubkey()} | Program: {program_id}\n")
 
         await ensure_initialized(client, program_id, admin)
+
+        await sync_clock(client)   # align epochs with the chain's clock
 
         agent_a, agent_b, agent_c = Keypair(), Keypair(), Keypair()
         rogue_admin = Keypair()

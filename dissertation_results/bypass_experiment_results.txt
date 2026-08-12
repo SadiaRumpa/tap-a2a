@@ -1,0 +1,82 @@
+========================================================================
+TAP-A2A — LAYER BYPASS AND STORAGE COST EXPERIMENT
+========================================================================
+Protocol already initialised (config A5cBnknUC6h24LYMpSXuuEvG9qmcwWdCF1BvXutyxzFP).
+Program: 7Bai6A8ANjhLcGHPWQXExAbPRYZ9jUxtFEzQq3FgDiDK
+Validator clock offset: -3147s from wall time (epochs derived from the chain's clock).
+
+Setup: one authorised agent, one agent in a group with no policy.
+       READ_DATABASE allowed for the first group only.
+       DELETE_RECORDS has no policy in any group.
+
+========================================================================
+PART 1 — BYPASSING THE MESSAGE LAYER
+========================================================================
+Every call below skips tap_a2a_messaging entirely: no
+TaskMessage, no signature check, no worker. The client talks
+straight to the program, as a compromised orchestrator or a
+hostile script would.
+
+[1a] Authorised agent, action within its policy
+  PASS: bypass_authorised_action_succeeds — granted — the chain authorises on its own state, not on how the request arrived
+
+[1b] Authorised agent, action with NO policy (the escalation attempt)
+  PASS: bypass_escalation_blocked — DENIED: No matching policy for this agent group/action (least-privilege enforced
+
+[1c] Agent whose group holds no policy for the action
+  PASS: bypass_wrong_group_blocked — DENIED: No matching policy for this agent group/action (least-privilege enforced
+
+[1d] Authorised agent submitting a forged nullifier
+  PASS: bypass_forged_nullifier_blocked — DENIED: Nullifier is not the correct derivation for this agent/action/epoch.
+
+[1e] Replaying 1a directly against the chain
+  PASS: bypass_replay_blocked — DENIED: REPLAY DETECTED — this nullifier was already consumed this epoch.
+
+========================================================================
+PART 2 — TRACEABILITY STORAGE COST
+========================================================================
+  PASS: storage_measured — 153 bytes, 0.001956 SOL per access
+
+  Per trace record: 153 bytes, 1,955,760 lamports (0.001956 SOL)
+
+  Extrapolated cost of an append-only audit trail:
+      Accesses    Accounts       Storage    Rent (SOL)
+  ----------------------------------------------------
+           100         100        0.01MB         0.196
+         1,000       1,000        0.15MB         1.956
+        10,000      10,000        1.46MB        19.558
+       100,000     100,000       14.59MB       195.576
+     1,000,000   1,000,000      145.91MB      1955.760
+
+  Rent is rent-exempt deposit, not a fee: it is locked for as
+  long as the record exists and is recoverable only if the
+  account is closed. Permanent auditability therefore has a
+  permanent capital cost, and the trade-off is governed by
+  EPOCH_SECONDS -- a longer epoch means fewer, coarser records.
+
+========================================================================
+RESULTS
+========================================================================
+  PASS  bypass_authorised_action_succeeds
+  PASS  bypass_escalation_blocked
+  PASS  bypass_wrong_group_blocked
+  PASS  bypass_forged_nullifier_blocked
+  PASS  bypass_replay_blocked
+  PASS  storage_measured
+
+6/6 checks passed.
+
+INTERPRETATION
+
+  1a succeeding is the correct result, not a weakness. Bypassing the
+  message layer does not grant authority: the agent in 1a was already
+  authorised for that action, and the chain does not care how the request
+  reached it.
+
+  1b-1e are the security claim. With the entire message layer removed,
+  the chain independently refuses privilege escalation, cross-group
+  access, forged nullifiers and replays. Worker-side checks are therefore
+  a defence-in-depth layer that fails safe: removing them costs early
+  rejection and the audit signal, not authorisation integrity.
+
+EXPERIMENT PASSED.

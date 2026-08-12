@@ -30,6 +30,10 @@ KEEP=(
   # Ring signatures
   "tap_a2a_trs.py"
   "trs_benchmark.py"
+  # A2A message layer (objective 3)
+  "tap_a2a_messaging.py"
+  "a2a_scenario_runner.py"
+  "bypass_experiment.py"
   # Formal verification
   "tap_a2a.spthy"
   "verify_tap_a2a.py"
