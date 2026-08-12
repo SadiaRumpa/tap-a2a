@@ -1,74 +1,4 @@
-"""
-TAP-A2A — Fujisaki–Suzuki traceable ring signatures.
 
-Implements the traceable ring signature of Fujisaki and Suzuki
-("Traceable Ring Signature", PKC 2007) over the ed25519 prime-order
-group, using libsodium's group operations via PyNaCl.
-
-WHAT THIS GIVES YOU
--------------------
-A signer proves membership of a ring R = {y_1..y_n} without revealing
-which member it is. Signatures are scoped to an ISSUE (here: the action
-and epoch). Within one issue:
-
-  - one signature      -> anonymous among the n ring members;
-  - two signatures     -> the signer is IDENTIFIED by Trace;
-  - same issue AND same message -> reported as LINKED (a duplicate).
-
-That is the "one-time traceable" property: anonymity is preserved for
-honest single use and forfeited automatically on reuse. Nobody has to
-be trusted to reveal the signer -- it falls out of the algebra.
-
-HOW IT WORKS (so the viva answer is yours, not the code's)
-----------------------------------------------------------
-Let h = H_G(issue, R) be a group element derived from the issue, and let
-each member have secret x_j with public y_j = g^{x_j}.
-
-The signer i computes its TAG sigma_i = h^{x_i}. This value depends only
-on (issue, x_i) -- the same signer signing the same issue twice produces
-the same tag, which is what makes tracing possible.
-
-The signature then publishes a LINE through the exponents rather than
-the tag itself. With A_0 = H_G(issue, R, message):
-
-    A_1 = (sigma_i - A_0) * i^{-1}        (additive notation)
-    sigma_j = A_0 + j * A_1     for j = 1..n
-
-By construction sigma_i is the signer's real tag, and the other sigma_j
-are just points on the same line -- so an observer cannot tell which
-index is the signer's. An AOS-style OR-proof then shows that for SOME
-index j, log_g(y_j) = log_h(sigma_j), without revealing j.
-
-Tracing two signatures on the same issue: each publishes a line, and the
-two lines pass through the signer's tag. Two distinct lines meet in at
-most one point, so:
-
-    all n entries agree  -> same signer, same message  -> LINKED
-    exactly one agrees   -> that index is the signer    -> TRACED
-    otherwise            -> different signers           -> INDEPENDENT
-
-SCOPE AND LIMITATIONS -- READ BEFORE CITING
--------------------------------------------
-1. This is an independent implementation written for this dissertation.
-   It is validated by the property tests in self_test(), NOT against the
-   paper's test vectors, and it has had no third-party review. Present
-   it as an implemented and empirically tested prototype, not as a
-   component carrying the paper's security proof.
-
-2. Verification is OFF-CHAIN. Solana cannot recompute a tag derived from
-   a secret key, so the gateway verifies signatures and runs Trace; the
-   chain provides the tamper-evident log. This puts the gateway inside
-   the trust boundary for availability and for linkability of requests
-   it observes. The chain still guarantees that the log cannot be
-   rewritten after the fact.
-
-3. This path is NOT covered by tap_a2a.spthy. The Tamarin model
-   describes the deployed deterministic-nullifier protocol. Formal
-   analysis of the ring-signature extension is future work.
-
-4. Anonymity is bounded by ring size. A ring of n gives an anonymity set
-   of n, and nothing more.
-"""
 import hashlib
 import os
 import secrets
@@ -104,8 +34,7 @@ def _s_from_int(i: int) -> bytes:
 
 
 def _s_rand() -> bytes:
-    """Uniform non-zero scalar. Zero is rejected because libsodium's
-    scalar multiplication refuses it, and it would be degenerate anyway."""
+
     while True:
         s = _s_reduce(secrets.token_bytes(64))
         if s != bytes(32):
@@ -136,7 +65,7 @@ def _ring_bytes(ring) -> bytes:
 # Keys
 # ----------------------------------------------------------------------
 def keygen():
-    """Return (secret_scalar, public_point)."""
+
     x = _s_rand()
     return x, _p_base(x)
 
@@ -145,7 +74,6 @@ def keygen():
 # Signature container
 # ----------------------------------------------------------------------
 class TraceableRingSignature:
-    """A1 fixes the tag line; c0 and z close the OR-proof chain."""
 
     __slots__ = ("a1", "c0", "z")
 
@@ -164,13 +92,7 @@ class TraceableRingSignature:
         return cls(blob[:32], blob[32:64], z)
 
     def anchor(self, issue: bytes) -> bytes:
-        """
-        32-byte value committing this signature to its issue, suitable as
-        an on-chain uniqueness key. It detects verbatim resubmission of
-        the same signature; it does NOT detect a second DIFFERENT
-        signature by the same signer -- that requires trace(), which is
-        why the gateway keeps the per-issue log.
-        """
+
         return hashlib.sha256(b"tap-a2a-trs-anchor" + issue + self.a1).digest()
 
     def __len__(self):
@@ -189,7 +111,7 @@ def _a0(issue: bytes, ring, message: bytes) -> bytes:
 
 
 def _tag_line(a0: bytes, a1: bytes, n: int) -> list:
-    """sigma_j = A0 + j*A1 for j = 1..n."""
+
     return [_p_add(a0, _p_mul(_s_from_int(j), a1)) for j in range(1, n + 1)]
 
 
@@ -203,12 +125,7 @@ def _challenge(issue, ring, a0, a1, message, a, b) -> bytes:
 # ----------------------------------------------------------------------
 def sign(issue: bytes, ring: list, message: bytes,
          secret: bytes, index: int) -> TraceableRingSignature:
-    """
-    Sign `message` under `issue` as ring member `index` (0-based).
 
-    Signing the same issue twice with the same key makes the signer
-    traceable — that is the intended behaviour, not a failure mode.
-    """
     n = len(ring)
     if n < 2:
         raise ValueError("a ring needs at least 2 members to provide anonymity")
@@ -252,7 +169,7 @@ def sign(issue: bytes, ring: list, message: bytes,
 
 def verify(issue: bytes, ring: list, message: bytes,
            sig: TraceableRingSignature) -> bool:
-    """True if `sig` is a valid ring signature by SOME member of `ring`."""
+
     n = len(ring)
     if n < 2 or len(sig) != n:
         return False
@@ -283,14 +200,7 @@ LINKED = "linked"
 def trace(issue: bytes, ring: list,
           message_a: bytes, sig_a: TraceableRingSignature,
           message_b: bytes, sig_b: TraceableRingSignature):
-    """
-    Compare two signatures on the SAME issue.
 
-    Returns:
-      LINKED           - identical signer and message (a duplicate submission)
-      (index, pubkey)  - the signer, identified, because they signed twice
-      INDEPENDENT      - different signers
-    """
     n = len(ring)
     line_a = _tag_line(_a0(issue, ring, message_a), sig_a.a1, n)
     line_b = _tag_line(_a0(issue, ring, message_b), sig_b.a1, n)
@@ -308,10 +218,7 @@ def trace(issue: bytes, ring: list,
 # Self-test
 # ----------------------------------------------------------------------
 def self_test(ring_size: int = 5, verbose: bool = True) -> bool:
-    """
-    Property tests. These are what the implementation is validated by,
-    so run them before citing any result that depends on this module.
-    """
+
     ok = True
 
     def check(name, cond):

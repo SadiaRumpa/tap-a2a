@@ -1,26 +1,4 @@
-"""
-Shared utilities for the TAP-A2A evaluation suite.
 
-Single source of truth for PDA derivation, instruction encoding,
-nullifier derivation and error classification. MUST be kept in sync
-with programs/tap_a2a/src/lib.rs.
-
-CHANGED IN THIS REVISION
-------------------------
-1. Nullifier derivation now mirrors the on-chain check exactly and is
-   built from the agent's PUBLIC key, not its secret key. The program
-   recomputes it and rejects any other value, so an agent can no longer
-   evade traceability by supplying random bytes.
-
-2. Terminology: the old name `generate_trs_nullifier` implied a
-   traceable ring signature. There is no ring and no anonymity set in
-   this system -- the agent signs its own transaction and its public key
-   is stored in the trace log. It is now `access_nullifier`, which is
-   what it actually is.
-
-3. Added the Config PDA, the `epoch` argument, and error codes
-   6005-6007 introduced by the authority and nullifier fixes.
-"""
 import hashlib
 import os
 import re
@@ -137,15 +115,7 @@ def current_epoch(now: float = None) -> int:
 
 
 def action_hash(name: str) -> list:
-    """
-    Deterministic 32-byte hash for a named capability, e.g. READ_DATABASE.
 
-    Deriving action hashes from names rather than using random bytes means
-    an auditor reading a TraceabilityLog can recompute which capability an
-    entry refers to. With random hashes the audit trail is only meaningful
-    to whoever still holds the mapping, which undercuts the point of an
-    immutable log.
-    """
     return list(hashlib.sha256(b"tap-a2a-action" + name.encode()).digest())
 
 
@@ -266,21 +236,7 @@ def ix_revoke_agent(program_id: Pubkey, admin: Pubkey, target_agent: Pubkey) -> 
 
 def ix_log_access(program_id: Pubkey, agent: Pubkey, group_id, action_hash,
                   epoch: int, nullifier=None, impersonate_as=None) -> Instruction:
-    """
-    Build a log_traceable_access instruction.
 
-    `nullifier` defaults to the correct derivation. Pass an explicit
-    value only to test that the program rejects a forged one -- see the
-    nullifier-forgery scenario in scenario_runner.py.
-
-    `impersonate_as` is TEST-ONLY. When set, the agent_record account is
-    derived from that key while `agent` remains the signer, producing a
-    request in which the signer presents someone else's registration.
-    lib.rs seeds agent_record on [b"agent", agent.key()], so Anchor
-    rejects this during account validation with ConstraintSeeds. This is
-    the empirical counterpart of the impersonation_resistance lemma in
-    tap_a2a.spthy.
-    """
     if nullifier is None:
         nullifier = access_nullifier(agent, group_id, action_hash, epoch)
     record_owner = impersonate_as if impersonate_as is not None else agent

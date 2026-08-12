@@ -1,16 +1,4 @@
-"""
-TAP-A2A — traceable ring signature benchmark.
 
-Measures how signing time, verification time, trace time and signature
-size scale with ring size. Ring size IS the anonymity parameter, so this
-table is the security/performance trade-off for the ring-signature
-extension: a larger anonymity set costs linearly more work and bytes.
-
-Writes trs_ring_size.csv and, if matplotlib is available,
-figure_6_3_trs_ring_size.png.
-
-Run:  python3 trs_benchmark.py
-"""
 import csv
 import statistics
 import sys

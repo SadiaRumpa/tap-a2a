@@ -1,33 +1,3 @@
-"""
-TAP-A2A Off-Chain Gateway (reference implementation)
-
-Demonstrates the policy-decision path as it would run OUTSIDE the
-program: verify an agent's signature, read AgentRecord and PolicyRecord
-from chain, and decide.
-
-IMPORTANT — READ BEFORE CITING THIS IN CHAPTER 6
-------------------------------------------------
-This script does NOT authenticate anything in a meaningful sense. It
-signs a payload and verifies that same payload in the same process,
-with no channel, no freshness challenge, and no binding between the
-signature and the on-chain transaction. It is a demonstration of the
-decision logic and an Ed25519 cost microbenchmark -- nothing more.
-
-There is also a live architectural question the dissertation must
-answer: this gateway and the on-chain program BOTH implement the access
-decision, and the orchestrator uses only the on-chain one. The trust
-model treats the blockchain as the trusted substrate, which makes the
-gateway an untrusted component performing enforcement -- a contradiction
-if the gateway is presented as the policy decision point. Either make
-the gateway advisory (a cache in front of the chain, which is the
-honest reading of the current code) or move enforcement into it and
-revise the trust model. Do not leave both claims standing.
-
-Usage:
-    python3 gateway.py <group_id_hex> <action_name>
-
-e.g.  python3 gateway.py 3f2a...  READ_DATABASE
-"""
 import base64
 import json
 import sys

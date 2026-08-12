@@ -1,61 +1,4 @@
-"""
-TAP-A2A — agent-to-agent message layer.
 
-Objective 3: secure A2A communication governed by the least-privilege
-policies of objective 2.
-
-The layer sits ABOVE the on-chain program and changes nothing in
-lib.rs. A message travels from one agent to another, and the receiving
-agent verifies it against on-chain state before acting:
-
-    orchestrator                         worker
-        |                                  |
-        |-- TaskMessage{to, capability,    |
-        |     task_id, nonce, issued_at,   |
-        |     expires_at} + Ed25519 sig -->|
-        |                                  | 1. signature valid?
-        |                                  | 2. sender registered + active
-        |                                  |    on-chain?
-        |                                  | 3. message fresh (not expired)?
-        |                                  | 4. nonce unused?
-        |                                  | 5. capability inside the
-        |                                  |    RECEIVER's own on-chain
-        |                                  |    policy scope?
-        |                                  |
-        |                                  |-- log_traceable_access -->  chain
-        |                                  |    (the program re-checks
-        |<------- TaskResult --------------|     everything independently)
-
-WHY THE RECEIVER CHECKS ITS OWN SCOPE
--------------------------------------
-Check 5 is what makes this least-privilege rather than plain messaging.
-A worker refuses a capability outside its own policy BEFORE touching the
-chain, so a compromised or injected orchestrator cannot widen a worker's
-authority by asking nicely. The chain then re-checks independently: two
-enforcement points, neither trusting the other.
-
-SCOPE -- READ BEFORE CITING
----------------------------
-1. This is DISPATCH, not DELEGATION. The orchestrator asks a worker to
-   exercise authority the worker already holds under standing policy. It
-   does not grant, attenuate, or forward authority of its own. There are
-   no capability tokens and no delegation chain, so
-   delegation-without-escalation is NOT demonstrated. Doing that properly
-   needs on-chain support and is future work.
-
-2. Transport is in-process for reproducibility. Messages are real signed
-   byte strings that are verified on receipt, but they are passed between
-   Python objects rather than over a network. Nothing in the verification
-   logic depends on that; a socket or HTTP transport would substitute
-   without changing the checks.
-
-3. NOT covered by tap_a2a.spthy. The Tamarin model describes the deployed
-   on-chain protocol. Formal analysis of this layer is future work.
-
-4. The nonce store is per-process. A production deployment would need it
-   shared across a worker's replicas, or the freshness window narrowed to
-   the point where replay is bounded by expiry alone.
-"""
 import json
 import time
 import uuid
@@ -84,12 +27,6 @@ class A2AError(Exception):
 # Message
 # ----------------------------------------------------------------------
 class TaskMessage:
-    """
-    A signed request from one agent to another.
-
-    The signature covers the canonical JSON encoding of every field, so
-    changing the recipient, the capability, or the expiry invalidates it.
-    """
 
     __slots__ = ("sender", "recipient", "capability", "task_id",
                  "nonce", "issued_at", "expires_at", "signature")
@@ -145,12 +82,7 @@ def compose(sender_kp: Keypair, recipient: Pubkey, capability: str,
 # Receiver
 # ----------------------------------------------------------------------
 class Worker:
-    """
-    An agent that accepts task messages and acts on them.
 
-    Holds its own keypair and its own on-chain group. Verifies every
-    message before doing anything.
-    """
 
     def __init__(self, agent_id: str, keypair: Keypair, group_id,
                  program_id: Pubkey):
@@ -186,9 +118,7 @@ class Worker:
             raise A2AError("REJECTED: nonce already seen — replayed message.")
 
     async def _check_sender_registered(self, client, msg: TaskMessage):
-        """The sender must be a registered, active agent on-chain. A valid
-        signature alone only proves key possession, not authorisation to
-        participate."""
+
         info = await client.get_account_info(agent_pda(self.program_id, msg.sender))
         if info.value is None:
             raise A2AError("REJECTED: sender is not a registered agent on-chain.")
@@ -197,12 +127,7 @@ class Worker:
             raise A2AError("REJECTED: sender has been revoked on-chain.")
 
     async def _check_within_my_scope(self, client, msg: TaskMessage):
-        """
-        The heart of objective 3. The capability must fall inside THIS
-        worker's own least-privilege policy. A worker refuses to act
-        outside its scope no matter who asks, so a compromised
-        orchestrator cannot widen it.
-        """
+
         action = action_hash(msg.capability)
         pda = policy_pda(self.program_id, self.group_id, action)
         info = await client.get_account_info(pda)
@@ -213,12 +138,7 @@ class Worker:
 
     # -- public entry point --------------------------------------------
     async def handle(self, client, msg: TaskMessage) -> str:
-        """
-        Verify and, if it passes, execute on-chain.
 
-        Checks run cheapest-first so a malformed message costs no RPC
-        round trips.
-        """
         self._check_signature(msg)
         self._check_addressed_to_me(msg)
         self._check_freshness(msg)
@@ -247,14 +167,7 @@ class Worker:
 # Sender
 # ----------------------------------------------------------------------
 class Orchestrator:
-    """
-    An agent that dispatches capabilities to workers over the A2A layer.
 
-    It has its own on-chain identity, so a worker can verify that the
-    request came from a registered, unrevoked agent. It does NOT hold or
-    forward authority for the capabilities it requests — see the scope
-    note at the top of this module.
-    """
 
     def __init__(self, keypair: Keypair, group_id, program_id: Pubkey):
         self.keypair = keypair

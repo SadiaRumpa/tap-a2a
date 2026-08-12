@@ -1,22 +1,4 @@
-"""
-TAP-A2A formal verification runner.
 
-Two experiments:
-
-  PART 1 - prove every lemma against the full model, recording result,
-           step count and wall-clock time.
-
-  PART 2 - ABLATION. Remove one enforcement mechanism at a time and
-           check that the lemma it protects becomes FALSIFIED. This is
-           the part that matters academically: it shows the properties
-           hold because of the mechanisms, not because the model is too
-           weak to express a violation. A lemma that stays verified
-           after its protection is removed is a modelling artefact, and
-           the ablation is what catches it.
-
-Run in Colab after the setup cell that puts tamarin-prover on PATH.
-Expects tap_a2a.spthy in the working directory.
-"""
 import re
 import subprocess
 import time

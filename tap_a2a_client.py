@@ -1,10 +1,4 @@
-"""
-Transaction helpers shared by every evaluation script.
 
-Split out of tap_a2a_common so that module stays dependency-light
-(pure derivation and encoding) and can be imported by tests that do not
-touch the network.
-"""
 import asyncio
 import json
 import os
@@ -46,14 +40,7 @@ COMMITMENT = Commitment(os.environ.get("TAP_A2A_COMMITMENT", "confirmed"))
 
 
 def rpc_client() -> AsyncClient:
-    """
-    Open a client pinned to COMMITMENT.
 
-    The commitment must be set on the CLIENT, not just on
-    confirm_transaction: account reads inherit it too, and a read at a
-    stricter level than the write can miss an account that was only just
-    created.
-    """
     return AsyncClient(RPC_URL, commitment=COMMITMENT)
 
 
@@ -85,22 +72,7 @@ async def send(client: AsyncClient, instruction, signers, label: str = None):
 
 
 async def sync_clock(client) -> float:
-    """
-    Align this process's notion of the epoch with the chain's.
 
-    Reads the Clock sysvar and records the difference from local wall
-    time. Every subsequent current_epoch() call then returns the epoch the
-    PROGRAM will compute, not the one this machine's clock suggests.
-
-    This matters on a long-running solana-test-validator, whose clock
-    advances with slot progression and falls behind real time. Without
-    this, a client eventually computes an epoch one ahead of the chain's
-    and every request is rejected with InvalidEpoch -- the on-chain grace
-    window tolerates a client that is behind, not one that is ahead.
-
-    Returns the offset in seconds; a large negative value means the
-    validator is lagging and is worth reporting in any results file.
-    """
     info = await client.get_account_info(CLOCK_SYSVAR)
     if info.value is None:
         return 0.0
@@ -113,13 +85,7 @@ async def sync_clock(client) -> float:
     return offset
 
 async def ensure_initialized(client: AsyncClient, program_id, admin: Keypair) -> bool:
-    """
-    Idempotently create the Config account that fixes the admin authority.
 
-    Every privileged instruction now carries `has_one = admin`, so nothing
-    works until this has run once after deployment. Re-running is harmless:
-    the second attempt fails with 'already in use' and is swallowed here.
-    """
     cfg = config_pda(program_id)
     existing = await client.get_account_info(cfg)
     if existing.value is not None:
@@ -146,13 +112,7 @@ async def airdrop(client: AsyncClient, pubkeys, lamports: int = 1_000_000_000,
 
 
 async def expect_denied(coro, expected_snippet: str, label: str) -> bool:
-    """
-    Assert that an operation is refused, and refused for the RIGHT reason.
 
-    Matching on the classified reason rather than merely on "it threw"
-    is what stops a scenario passing because of an unrelated failure --
-    an out-of-funds error, say, rather than the policy check under test.
-    """
     try:
         await coro
         print(f"  FAIL: {label} was NOT blocked (a denial was expected).")

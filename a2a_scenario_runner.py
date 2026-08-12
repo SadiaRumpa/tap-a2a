@@ -1,17 +1,4 @@
-"""
-TAP-A2A — A2A message layer security scenarios.
 
-Evidence for objective 3: secure agent-to-agent communication under the
-least-privilege policies of objective 2.
-
-Seven scenarios. One legitimate exchange, six attacks that must be
-refused. Each attack targets a different check, so a single failing
-mechanism cannot be masked by another.
-
-Exit code is 0 only if every scenario behaves as expected.
-
-Run:  python3 a2a_scenario_runner.py
-"""
 import asyncio
 import sys
 import time

@@ -1,60 +1,4 @@
-"""
-TAP-A2A Agentic Orchestration
 
-An orchestrator decomposes a task and dispatches each step to a worker
-agent AS A SIGNED A2A MESSAGE (see tap_a2a_messaging.py). Every worker
-holds its own on-chain identity and its own narrow policy scope, so each
-step crosses the authentication and authorisation boundary twice: once at
-the receiving worker, which verifies the message and checks the capability
-against its own policy, and again on-chain when the worker submits the
-access.
-
-The orchestrator has an on-chain identity of its own but NO data
-capabilities. It can ask; it cannot act. Any authority exercised belongs
-to the worker that exercised it.
-
-SCOPE -- READ THIS BEFORE CITING IT. The orchestrator DISPATCHES; it
-does not DELEGATE. It asks a worker to exercise authority the worker
-already holds under standing policy written in advance by the
-administrator; it does not grant, attenuate or forward authority of its
-own. There are no capability tokens and no delegation chain, so
-delegation-without-escalation is NOT demonstrated -- that needs on-chain
-support and is future work.
-
-What IS demonstrated is that policy enforcement sits BELOW the planner: a
-compromised or prompt-injected planner cannot widen a worker's authority,
-because the worker refuses out-of-scope capabilities before touching the
-chain and the program refuses them again independently.
-
-WHY THIS WAS REBUILT
---------------------
-The previous version was a single hardcoded string match: if the prompt
-contained "READ_DATABASE" it returned a tool call whose arguments the
-caller had already filled in. There was no plan, no delegation and no
-second agent, so least-privilege was never actually exercised -- an
-agent either asked for the one thing it was allowed, or it did not ask.
-The line printed as "LLM Reasoning" was a literal print statement.
-
-It also passed the agent's full 64-byte keypair through the tool-call
-arguments. With a real model that ships the signing key to the model
-provider. Tools here take an agent_id; signing happens locally in the
-wallet registry and secret material never enters a tool payload or a
-prompt.
-
-WHAT THIS DEMONSTRATES
-----------------------
-1. Policy enforcement below the planner -- the orchestrator holds broad
-   authority but cannot grant a worker anything the worker's own
-   on-chain policy does not already permit.
-2. Prompt injection resistance -- scenario 2 feeds the planner a task
-   description carrying an injected instruction. The planner obeys it.
-   The chain refuses it anyway. That separation is the entire argument
-   for putting enforcement below the model.
-
-The planner is a DeterministicPlanner: a scripted test double, NOT a
-language model. It exists so runs are reproducible without an API key.
-Do not describe its output as model reasoning in the dissertation.
-"""
 import asyncio
 import sys
 
@@ -102,24 +46,7 @@ REGISTRY = WalletRegistry()
 
 async def dispatch_over_a2a(client, orchestrator, workers: dict,
                             agent_id: str, capability: str) -> str:
-    """
-    Send a signed task message from the orchestrator to a worker.
 
-    This is the only path by which the orchestrator can cause anything to
-    happen. It never submits a transaction itself and never touches a
-    worker's key: it composes a signed TaskMessage naming the capability,
-    and the WORKER decides whether to act.
-
-    The worker verifies the signature, that the sender is a registered
-    and unrevoked agent on-chain, that the message is fresh and unreplayed,
-    and -- the part that matters for least privilege -- that the capability
-    falls inside its OWN on-chain policy scope. Only then does it submit
-    the access, which the program checks again independently.
-
-    So a planner that has been talked into requesting DELETE_RECORDS
-    cannot obtain it: the worker refuses before the chain is touched, and
-    the chain would refuse anyway.
-    """
     if agent_id not in workers:
         return f"DENIED: unknown agent '{agent_id}'."
     try:
@@ -132,14 +59,7 @@ async def dispatch_over_a2a(client, orchestrator, workers: dict,
 # Deterministic planner (test double, not a language model).
 # ----------------------------------------------------------------------
 class DeterministicPlanner:
-    """
-    Maps a task description to an ordered list of (agent_id, action) steps.
 
-    Deliberately naive and deliberately obedient: if the task text asks
-    for a capability, the planner delegates it without judgement. That is
-    the point -- the security argument must not depend on the planner
-    being sensible.
-    """
 
     CAPABILITY_KEYWORDS = {
         "READ_DATABASE": ("reader", ["read the database", "read_database", "gather data"]),
@@ -161,17 +81,7 @@ class DeterministicPlanner:
 async def run_scenario(client, program_id, planner, orchestrator, workers,
                        title: str, task: str,
                        roster: dict, expected_denials: int) -> bool:
-    """
-    `roster` maps a planner role ("reader"/"writer") to a concrete
-    registered agent id.
 
-    Scenarios take their own roster because the nullifier is bound to
-    (agent, group, action, epoch): re-running the same capability with
-    the same agent inside one epoch is a replay by construction, and the
-    program correctly refuses it. Reusing one pair of workers across
-    scenarios would therefore make every scenario after the first
-    register spurious denials.
-    """
     print("\n" + "=" * 72)
     print(title)
     print("=" * 72)

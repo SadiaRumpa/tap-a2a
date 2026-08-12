@@ -1,31 +1,4 @@
-"""
-TAP-A2A — layer bypass and storage cost experiment.
 
-Two questions this answers with evidence rather than assertion.
-
-QUESTION 1: DOES DEFENCE IN DEPTH ACTUALLY HOLD?
-------------------------------------------------
-The system enforces at two independent points: the receiving worker
-checks a signed message against its own on-chain policy scope, and the
-Solana program re-checks everything when the access is submitted. It is
-easy to CLAIM those are independent. This experiment removes the first
-layer entirely -- calling log_traceable_access directly, with no
-TaskMessage, no signature verification, no worker -- and records what the
-chain does on its own.
-
-The result matters for the threat model. An attacker who compromises the
-orchestrator, or who simply ignores the message layer and talks to the
-RPC endpoint, is exactly this attacker.
-
-QUESTION 2: WHAT DOES TRACEABILITY COST TO STORE?
---------------------------------------------------
-Every successful access permanently creates a rent-exempt trace account.
-That is the price of an append-only audit trail, and it grows without
-bound. This measures the per-access cost and extrapolates, so the
-trade-off can be discussed with numbers instead of adjectives.
-
-Run:  python3 bypass_experiment.py
-"""
 import asyncio
 import sys
 

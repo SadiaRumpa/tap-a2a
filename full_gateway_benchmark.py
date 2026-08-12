@@ -1,36 +1,4 @@
-"""
-TAP-A2A Performance Benchmark
 
-Measures the three stages of an access decision, plus on-chain compute
-consumption, over N iterations. Writes gateway_<N>_iterations.csv --
-the single canonical data source that generate_graphs.py reads.
-
-CHANGED IN THIS REVISION
-------------------------
-- Adds the `epoch` argument and derives the nullifier from the agent's
-  public key, matching the on-chain verification.
-- Uses a distinct action hash per iteration. Previously every iteration
-  used one action hash with a different nonce, which is no longer valid:
-  the nullifier is now bound to (agent, group, action, epoch), so a
-  second access to the SAME action in the same epoch is correctly
-  rejected as a replay. That is the intended security property, not a
-  bug -- but it means a throughput benchmark must vary the action.
-- Renames the "signature verification" stage honestly. The script signs
-  and verifies in the same process, so this is an Ed25519 verification
-  microbenchmark, not an authentication measurement. Describe it that
-  way in Chapter 6.
-- Exits non-zero on failure.
-
-READING THE NUMBERS
--------------------
-"Policy read" is two sequential RPC account fetches. "On-chain decision"
-is submit-and-confirm for the access transaction. They are NOT additive
-into a single end-to-end figure -- the confirm already includes the
-program's own policy evaluation. Report them as separate stages. The
-progress report's Table I summed a verification cost and a query cost
-into a "total"; that framing came from the now-deleted
-performance_test.py and should be regenerated from this script.
-"""
 import asyncio
 import csv
 import statistics

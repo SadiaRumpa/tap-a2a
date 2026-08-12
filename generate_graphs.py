@@ -1,25 +1,4 @@
-"""
-TAP-A2A Dissertation Figures
 
-Reads the canonical benchmark CSV produced by full_gateway_benchmark.py
-and renders the latency and compute-unit figures from real data.
-
-CHANGED IN THIS REVISION
-------------------------
-- Matches the new CSV schema (Ed25519_Verify_ms, Policy_Read_ms,
-  OnChain_Decision_ms, Compute_Units).
-- Figure 6.1 now plots all three stages side by side rather than a
-  single "total decision" box. The stages are measured independently
-  and are not additive, so presenting one summed total would misstate
-  the pipeline.
-- Corrects the compute-unit reference line. The old chart labelled
-  200,000 as the "Solana Block Limit". It is not: 200,000 is the
-  DEFAULT per-transaction compute budget (raisable to 1.4M via
-  ComputeBudgetProgram). The block limit is far higher. Mislabelling
-  this would misstate the headroom argument in the evaluation.
-- Exits non-zero on failure so the pipeline cannot silently skip
-  figure generation.
-"""
 import glob
 import sys
 
