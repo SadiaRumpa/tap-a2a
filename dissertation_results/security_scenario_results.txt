@@ -1,0 +1,69 @@
+======================================================================
+TAP-A2A SECURITY SCENARIO SUITE
+======================================================================
+Admin: Cw92kFLvZfPKAoLAkKdyxfPqQQHqYCdKKR1MnogFMwLp | Program: 7Bai6A8ANjhLcGHPWQXExAbPRYZ9jUxtFEzQq3FgDiDK
+
+Protocol already initialised (config A5cBnknUC6h24LYMpSXuuEvG9qmcwWdCF1BvXutyxzFP).
+
+Agent A (allowed):      4uk5H2MbN8LbxzhGdf6kXcbQV5sLBwAZfxseAyFtwhKX
+Agent B (no policy):    4QFXHaZtmcerbmxYrQRtWE2Lzyw2o1ZEDZgEqT6a4gCX
+Agent C (unregistered): DLXRj5i5yxMWW9KodrAxNM4LBJVPsmdKfHuGZVFikLB2
+Rogue admin:            Aowd9XtpCGGoCb2sdjopkw21gh3oXgdc2KwvSVfDMPLw
+
+Airdropping...
+
+[1] Registering Agent A and setting its policy...
+    [Register Agent A] Latency: 507.96 ms | CUs: 12781
+    [Set Policy (allow)] Latency: 505.96 ms | CUs: 9409
+  Registered and policy set.
+
+[2] Agent A performing an ALLOWED action...
+    [Agent A allowed access] Latency: 506.29 ms | CUs: 14564
+  PASS: access granted and logged.
+
+[3] Agent B (registered, no policy for its action)...
+    [Register Agent B] Latency: 507.73 ms | CUs: 11281
+  PASS: Agent B (no policy) blocked -> DENIED: No matching policy for this agent group/action (least-privilege enforced).
+
+[4] Agent C (never registered)...
+  PASS: Agent C (unregistered) blocked -> DENIED: Agent is not registered.
+
+[5] Replaying Agent A's nullifier for this epoch...
+  PASS: Replay of Agent A's access blocked -> DENIED: REPLAY DETECTED — this nullifier was already consumed this epoch.
+
+[6] Agent A forging a random nullifier to evade traceability...
+  PASS: Agent A (forged nullifier) blocked -> DENIED: Nullifier is not the correct derivation for this agent/action/epoch.
+
+[7] Rogue key attempting privileged operations...
+  PASS: Rogue admin (register agent) blocked -> DENIED: Signer is not the configured protocol administrator.
+  PASS: Rogue admin (revoke agent) blocked -> DENIED: Signer is not the configured protocol administrator.
+
+[8] Policy revocation (allow -> deny) takes effect...
+    [Set Policy (allow)] Latency: 505.76 ms | CUs: 9409
+    [Update Policy (deny)] Latency: 506.36 ms | CUs: 5563
+  PASS: Access after policy flipped to deny blocked -> DENIED: Policy explicitly denies this action.
+
+[9] Revoking Agent A, then retrying access...
+    [Set Policy (allow, pre-revocation)] Latency: 506.76 ms | CUs: 9409
+    [Revoke Agent A] Latency: 507.76 ms | CUs: 7452
+  PASS: Revoked Agent A blocked -> DENIED: Agent has been REVOKED by the administrator.
+
+[10] Agent B presenting Agent A's registration (impersonation)...
+  PASS: Agent B impersonating Agent A blocked -> DENIED: IMPERSONATION BLOCKED — the agent record presented does not belong to the signing agent.
+
+======================================================================
+SCENARIO RESULTS
+======================================================================
+  PASS  allowed_access
+  PASS  no_policy
+  PASS  unregistered
+  PASS  replay
+  PASS  nullifier_forgery
+  PASS  rogue_register
+  PASS  rogue_revoke
+  PASS  policy_revocation
+  PASS  revoked_agent
+  PASS  impersonation
+
+10/10 scenarios passed.
+SUITE PASSED.

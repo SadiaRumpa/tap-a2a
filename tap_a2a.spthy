@@ -1,0 +1,273 @@
+theory TAP_A2A
+begin
+
+builtins: signing, hashing
+
+/*
+  TAP-A2A: traceable authentication and least-privilege access control.
+
+  This models the protocol AS DEPLOYED in programs/tap_a2a/src/lib.rs,
+  not an idealised version of it. Rule-to-code correspondence:
+
+    Init_Protocol   <-> initialize        (fixes the admin authority)
+    Register_Agent  <-> register_agent
+    Set_Policy      <-> set_policy
+    Revoke_Agent    <-> revoke_agent
+    Agent_Request   <-> the client building and signing a request
+    Chain_Verify    <-> log_traceable_access
+
+  TRUST MODEL. The blockchain and the deployed program are trusted:
+  their state is held in facts the adversary cannot reach. Everything
+  else -- the network, agents, the gateway -- is untrusted. This matches
+  the Dolev-Yao formulation in the system model: the adversary controls
+  the network, can replay, can inject rogue agents, and can compromise
+  agent keys (Compromise_Key), but cannot forge signatures or break the
+  hash.
+
+  WHAT IS DELIBERATELY NOT MODELLED, and must be stated as such in the
+  dissertation rather than quietly omitted:
+
+  - Epoch bounds. lib.rs rejects an epoch outside the current one and
+    the one before. Here $e ranges freely. Modelling wall-clock windows
+    in Tamarin needs an explicit ordering theory and buys little: the
+    one-time property below is per-epoch either way.
+  - Ring signatures. There are none in the implementation. The nullifier
+    is derived from the agent's PUBLIC key, so it is publicly
+    computable. This model therefore proves accountability, NOT
+    anonymity -- do not claim otherwise on the strength of it.
+  - Compute/gas exhaustion and denial of service. Out of scope for a
+    symbolic model.
+*/
+
+// ---------------------------------------------------------------------
+// Restrictions
+// ---------------------------------------------------------------------
+
+restriction Equality:
+  "All x y #i. Eq(x, y) @ #i ==> x = y"
+
+restriction OnlyOnce:
+  "All x #i #j. OnlyOnce(x) @ #i & OnlyOnce(x) @ #j ==> #i = #j"
+
+/*
+  The trace-log PDA is seeded by the nullifier, so a second access
+  carrying the same nullifier fails at account creation. Tamarin cannot
+  express "this value has not been seen before" as a premise, so the
+  runtime guarantee is encoded as a restriction on traces.
+
+  This is the standard idiom, but be ready to defend it: the restriction
+  asserts the CHAIN behaves correctly, and the interesting lemma
+  (one_access_per_agent_action_epoch) then follows from that plus the
+  nullifier being a deterministic function of agent, group, action and
+  epoch. It is that determinism -- checked on-chain -- that does the real
+  work, and it is what an adversary would otherwise evade by choosing a
+  random nullifier.
+*/
+restriction UniqueNullifier:
+  "All n #i #j. UseNullifier(n) @ #i & UseNullifier(n) @ #j ==> #i = #j"
+
+// ---------------------------------------------------------------------
+// Key infrastructure
+// ---------------------------------------------------------------------
+
+rule Create_Key:
+    [ Fr(~ltk) ]
+  --[ NewKey($A), OnlyOnce(<'key', $A>) ]->
+    [ !Ltk($A, ~ltk), !Pk($A, pk(~ltk)), Out(pk(~ltk)) ]
+
+rule Compromise_Key:
+    [ !Ltk($A, ltk) ]
+  --[ Compromised($A) ]->
+    [ Out(ltk) ]
+
+// ---------------------------------------------------------------------
+// Administrative control plane
+// ---------------------------------------------------------------------
+
+rule Init_Protocol:
+    [ !Ltk($Admin, skAdmin) ]
+  --[ InitConfig($Admin), OnlyOnce('config') ]->
+    [ !Config($Admin) ]
+
+rule Register_Agent:
+    [ !Config($Admin), !Pk($A, pkA) ]
+  --[ Register($Admin, $A, $g), Active($A), OnlyOnce(<'reg', $A>) ]->
+    [ !AgentGroup($A, $g), AgentActive($A) ]
+
+rule Set_Policy:
+    [ !Config($Admin) ]
+  --[ SetPolicy($Admin, $g, $act), OnlyOnce(<'pol', $g, $act>) ]->
+    [ !PolicyAllows($g, $act) ]
+
+/*
+  AgentActive is a LINEAR fact, so revocation consumes it and no later
+  access can fire. lib.rs has no reinstate instruction, which is why
+  nothing reproduces it here.
+*/
+rule Revoke_Agent:
+    [ !Config($Admin), AgentActive($A) ]
+  --[ Revoke($Admin, $A) ]->
+    [ ]
+
+// ---------------------------------------------------------------------
+// Access protocol
+// ---------------------------------------------------------------------
+
+rule Agent_Request:
+  let req = <'access', pk(ltk), $act, $e>
+  in
+    [ !Ltk($A, ltk), !AgentGroup($A, $g) ]
+  --[ Send($A, $g, $act, $e) ]->
+    [ Out(<req, sign(req, ltk)>) ]
+
+/*
+  Chain_Verify mirrors log_traceable_access:
+    - signature must verify against the registered key   (Eq)
+    - agent must be registered and active         (AgentActive)
+    - policy must exist and allow the action     (!PolicyAllows)
+    - nullifier must be the correct derivation    (the let-binding:
+      the chain recomputes n rather than accepting it)
+    - nullifier must be unused           (UniqueNullifier)
+
+  Recomputing n in the let-binding is the formal counterpart of the
+  InvalidNullifier check. Before that check existed, this rule would
+  have taken n as a free variable -- and the adversary could then supply
+  any value, breaking one_access_per_agent_action_epoch below.
+
+  NOTE ON THE REQUEST FORMAT. The request carries only <pkA, act, e>.
+  The group comes from !AgentGroup -- the chain's own state -- mirroring
+  lib.rs, which reads agent_record.agent_group_id rather than trusting a
+  caller-supplied group. An earlier version of this model put the group
+  AND the nullifier in the incoming message; that was both unfaithful to
+  the implementation and non-terminating, because Tamarin then had to
+  reason about the adversary deriving h(...) for every instantiation of
+  the free public variables.
+*/
+rule Chain_Verify:
+  let n   = h(<'tap-a2a-nullifier', pkA, $g, $act, $e>)
+      req = <'access', pkA, $act, $e>
+  in
+    [ In(<req, sig>)
+    , !Pk($A, pkA)
+    , !AgentGroup($A, $g)
+    , AgentActive($A)
+    , !PolicyAllows($g, $act) ]
+  --[ Eq(verify(sig, req, pkA), true)
+    , Access($A, $g, $act, $e)
+    , Active($A)
+    , Logged($A, $g, $act, $e, n)
+    , UseNullifier(n) ]->
+    [ AgentActive($A)
+    , TraceLog($A, $g, $act, $e, n) ]
+
+// ---------------------------------------------------------------------
+// Lemmas
+//
+// PROVE executable FIRST. If it fails, the model is unexecutable and
+// every other lemma is passing vacuously -- which is exactly how the
+// old Scyther model went wrong.
+// ---------------------------------------------------------------------
+
+lemma executable:
+  exists-trace
+  "Ex A g act e #i.
+      Access(A, g, act, e) @ #i
+    & not (Ex #c. Compromised(A) @ #c)"
+
+lemma no_access_without_registration [use_induction]:
+  "All A g act e #i.
+      Access(A, g, act, e) @ #i
+    ==> Ex Adm #r. Register(Adm, A, g) @ #r & #r < #i"
+
+lemma no_access_without_policy:
+  "All A g act e #i.
+      Access(A, g, act, e) @ #i
+    ==> Ex Adm #r. SetPolicy(Adm, g, act) @ #r & #r < #i"
+
+/*
+  The traceability / one-time property, and the heart of the design.
+  An agent gets at most one access per (group, action, epoch). Because
+  the nullifier is a deterministic function of exactly those values and
+  the chain recomputes it, a second attempt necessarily collides.
+*/
+lemma one_access_per_agent_action_epoch:
+  "All A g act e #i #j.
+      Access(A, g, act, e) @ #i & Access(A, g, act, e) @ #j
+    ==> #i = #j"
+
+/*
+  HELPER INVARIANT.
+
+  Chain_Verify consumes AgentActive($A) and restores it, so proving
+  revocation_is_effective directly means tracing that linear fact
+  backwards through an unbounded chain of accesses. Induction on the
+  lemma itself is too weak to carry "not yet revoked" across each hop,
+  which is why the direct formulation did not terminate.
+
+  This establishes the invariant once, by induction:
+
+    base case - the first Active($A) is the registration, unique by
+                OnlyOnce. Revoke_Agent needs an AgentActive fact that
+                only registration can have produced, so no revocation
+                can precede it.
+    step case - a later Active($A) comes from Chain_Verify, which
+                consumed the AgentActive produced at the previous
+                Active($A). A revocation in between would have consumed
+                that same linear fact, and a linear fact cannot be
+                consumed twice.
+
+  Marked [reuse] so revocation_is_effective cites it rather than
+  redoing the induction. It must appear BEFORE that lemma in the file.
+*/
+lemma agent_active_implies_not_revoked [use_induction, reuse]:
+  all-traces
+  "All A #i.
+      Active(A) @ #i
+    ==> not (Ex Adm #r. Revoke(Adm, A) @ #r & #r < #i)"
+
+lemma revocation_is_effective:
+  "All A g act e Adm #r #i.
+      Revoke(Adm, A) @ #r & Access(A, g, act, e) @ #i
+    ==> #i < #r"
+
+/*
+  Impersonation resistance, more precisely ATTRIBUTION SOUNDNESS UNDER
+  KEY COMPROMISE: an access attributed to A implies either A actually
+  sent it, or A's key was compromised. The second disjunct is not a
+  weakness -- once the adversary holds the key it can produce valid
+  signatures by definition -- but the write-up should name the property
+  this way rather than claiming unconditional impersonation resistance.
+*/
+/*
+  AUDITABILITY.
+
+  Every access accepted by the protocol emits a trace record. Access and
+  Logged are produced by the same firing of Chain_Verify, so this is a
+  structural property rather than a deep one -- it is cheap to prove and
+  should be presented as documenting the audit invariant, not as a hard
+  security result. Its value is that it makes "no access goes unlogged"
+  an explicit, machine-checked claim rather than an assertion in prose.
+*/
+lemma every_access_is_logged:
+  all-traces
+  "All A g act e #i.
+      Access(A, g, act, e) @ #i
+    ==> Ex n. Logged(A, g, act, e, n) @ #i"
+
+lemma impersonation_resistance:
+  "All A g act e #i.
+      Access(A, g, act, e) @ #i
+    ==> (Ex #s. Send(A, g, act, e) @ #s & #s < #i)
+      | (Ex #c. Compromised(A) @ #c)"
+
+/*
+  Accountability: every granted access leaves a trace bound to a
+  registered agent. Auditability follows from TraceLog being produced on
+  every firing of Chain_Verify.
+*/
+lemma accountability [use_induction]:
+  "All A g act e #i.
+      Access(A, g, act, e) @ #i
+    ==> Ex Adm #r. Register(Adm, A, g) @ #r & #r < #i"
+
+end

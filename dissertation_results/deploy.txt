@@ -1,0 +1,9 @@
+Deploying cluster: http://127.0.0.1:8899
+Upgrade authority: /Users/sadiahossain/.config/solana/id.json
+Deploying program "tap_a2a"...
+Program path: /Users/sadiahossain/tap_a2a/target/deploy/tap_a2a.so...
+Program Id: 7Bai6A8ANjhLcGHPWQXExAbPRYZ9jUxtFEzQq3FgDiDK
+
+Signature: 5BtWsUiKoYDLs13Ak1ZxSGVUa1FoCQNmc1ajpDbBrPerfVJgZRCRupA1ai1XHiXywHqTCKM6rDT1xWbhHVstEdCA
+
+Deploy success

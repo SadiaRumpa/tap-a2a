@@ -1,0 +1,6 @@
+Loading 'gateway_100_iterations.csv'
+Saved 'figure_6_1_latency_by_stage.png'
+Saved 'figure_6_2_cu_bar_chart.png'
+
+Median CU: 14,564 | Max CU: 22,064
+Headroom against the default 200,000 CU transaction budget: 9.1x

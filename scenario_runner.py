@@ -1,220 +1,225 @@
-import json
-import struct
-import base64
-import time
-from datetime import datetime
-from nacl.signing import VerifyKey
-from nacl.exceptions import BadSignatureError
-from solders.pubkey import Pubkey
+"""
+TAP-A2A Security Scenario Runner
+
+Exercises every class of denial the on-chain program enforces and
+reports a hard PASS/FAIL count. Exits non-zero if any scenario fails,
+so the evaluation pipeline cannot report success on a broken run.
+
+CHANGED IN THIS REVISION
+------------------------
+- Exits non-zero on failure (previously always exited 0, and the shell
+  scripts decided success by grepping for the string "SUCCESS", which
+  matched even if only one of six scenarios passed).
+- Denials are checked for the RIGHT reason, not merely for throwing.
+- Added scenario 6: nullifier forgery. This is the scenario that
+  actually tests traceability -- an agent supplying a random nullifier
+  instead of the correct derivation. Under the previous program this
+  attack SUCCEEDED silently, because the nullifier was never verified
+  on-chain, which meant the old "replay" scenario was testing a
+  strawman (an adversary who resubmits identical bytes).
+- Added scenario 7: unauthorised admin. Under the previous program any
+  funded keypair could register agents, author policy and revoke
+  agents, because nothing constrained who `admin` was.
+"""
+import asyncio
+import sys
+
 from solders.keypair import Keypair
-from solana.rpc.api import Client
 
-client = Client("http://127.0.0.1:8899")
-PROGRAM_ID = Pubkey.from_string("6uKhjh29AdQxqtWwcNjo8efyPBzwookTPdzzEiozgyiS")
-MAX_TIMESTAMP_AGE = 300 # 5 minutes for replay protection
+from tap_a2a_common import (
+    load_program_id, generate_bytes32, current_epoch,
+    access_nullifier, agent_pda, ix_register_agent, ix_set_policy,
+    ix_update_policy, ix_revoke_agent, ix_log_access,
+)
+from tap_a2a_client import rpc_client, load_admin, send, ensure_initialized, airdrop, expect_denied
 
-# Audit log file
-AUDIT_LOG_FILE = "access_audit_log.json"
 
-def load_agent(filename):
-    try:
-        with open(filename, "r") as f:
-            return Keypair.from_bytes(bytes(json.load(f)))
-    except FileNotFoundError:
-        return None
+async def main() -> int:
+    print("=" * 70)
+    print("TAP-A2A SECURITY SCENARIO SUITE")
+    print("=" * 70)
 
-def verify_signature(pubkey_bytes, message_bytes, signature_bytes):
-    try:
-        VerifyKey(pubkey_bytes).verify(message_bytes, signature_bytes)
-        return True
-    except BadSignatureError:
-        return False
+    program_id = load_program_id()
+    results = {}
 
-def get_pda(seeds):
-    return Pubkey.find_program_address(seeds, PROGRAM_ID)[0]
+    async with rpc_client() as client:
+        admin = load_admin()
+        print(f"Admin: {admin.pubkey()} | Program: {program_id}\n")
 
-def get_account_data(pda):
-    response = client.get_account_info(pda)
-    if response.value is None:
-        return None
-    data = response.value.data
-    if isinstance(data, str):
-        return base64.b64decode(data)
-    elif isinstance(data, tuple):
-        return base64.b64decode(data[0])
-    return bytes(data)
+        await ensure_initialized(client, program_id, admin)
 
-def check_agent_status(agent_pubkey):
-    agent_pda = get_pda([b"agent", bytes(agent_pubkey)])
-    account_data = get_account_data(agent_pda)
-    if account_data is None:
-        return "NOT_REGISTERED"
-    data = account_data[8:]
-    is_active = struct.unpack('<32s?qB', data)[1]
-    return "ACTIVE" if is_active else "REVOKED"
+        agent_a, agent_b, agent_c = Keypair(), Keypair(), Keypair()
+        rogue_admin = Keypair()
+        print(f"\nAgent A (allowed):      {agent_a.pubkey()}")
+        print(f"Agent B (no policy):    {agent_b.pubkey()}")
+        print(f"Agent C (unregistered): {agent_c.pubkey()}")
+        print(f"Rogue admin:            {rogue_admin.pubkey()}")
 
-def check_policy(agent_pubkey, resource_id):
-    policy_pda = get_pda([b"policy", bytes(agent_pubkey), resource_id.encode('utf-8')])
-    policy_data = get_account_data(policy_pda)
-    if policy_data is None:
-        return None
-    policy_data = policy_data[8:]
-    offset = 32
-    res_id_len = struct.unpack('<I', policy_data[offset:offset+4])[0]
-    offset += 4 + res_id_len
-    scope_len = struct.unpack('<I', policy_data[offset:offset+4])[0]
-    offset += 4
-    return policy_data[offset:offset+scope_len].decode('utf-8')
+        print("\nAirdropping...")
+        await airdrop(client, [agent_a.pubkey(), agent_b.pubkey(),
+                               agent_c.pubkey(), rogue_admin.pubkey()])
 
-def log_access_decision(agent_pubkey, resource_id, action, decision, reason, timestamp):
-    """Log access decision to local audit file"""
-    audit_entry = {
-        "timestamp": timestamp,
-        "datetime": datetime.fromtimestamp(timestamp).isoformat(),
-        "agent_pubkey": str(agent_pubkey),
-        "resource_id": resource_id,
-        "action": action,
-        "decision": decision,
-        "reason": reason
-    }
-    
-    # Read existing log or create new
-    try:
-        with open(AUDIT_LOG_FILE, "r") as f:
-            audit_log = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        audit_log = []
-    
-    # Append new entry
-    audit_log.append(audit_entry)
-    
-    # Write back to file
-    with open(AUDIT_LOG_FILE, "w") as f:
-        json.dump(audit_log, f, indent=2)
+        group_id = generate_bytes32()
+        action_allowed = generate_bytes32()
+        action_denied = generate_bytes32()   # deliberately never given a policy
+        action_revocable = generate_bytes32()
+        action_after_revoke = generate_bytes32()
+        epoch = current_epoch()
 
-def simulate_access(agent, resource_id, action, nonce, timestamp, custom_sig=None):
-    payload_str = f"{agent.pubkey()}|{nonce}|{timestamp}|{resource_id}|{action}"
-    payload_bytes = payload_str.encode('utf-8')
-    
-    signature = custom_sig if custom_sig else agent.sign_message(payload_bytes)
-    
-    # 1. Verify Signature
-    if not verify_signature(bytes(agent.pubkey()), payload_bytes, bytes(signature)):
-        decision = "DENIED"
-        reason = "INVALID_SIGNATURE"
-        log_access_decision(agent.pubkey(), resource_id, action, decision, reason, timestamp)
-        return decision, reason
-    
-    # 2. Check Replay (Timestamp Freshness)
-    if abs(time.time() - timestamp) > MAX_TIMESTAMP_AGE:
-        decision = "DENIED"
-        reason = f"REPLAY_ATTACK (Timestamp too old)"
-        log_access_decision(agent.pubkey(), resource_id, action, decision, reason, timestamp)
-        return decision, reason
-    
-    # 3. Check Agent Status
-    status = check_agent_status(agent.pubkey())
-    if status == "NOT_REGISTERED":
-        decision = "DENIED"
-        reason = "NOT_REGISTERED"
-        log_access_decision(agent.pubkey(), resource_id, action, decision, reason, timestamp)
-        return decision, reason
-    if status == "REVOKED":
-        decision = "DENIED"
-        reason = "REVOKED"
-        log_access_decision(agent.pubkey(), resource_id, action, decision, reason, timestamp)
-        return decision, reason
-    
-    # 4. Check Policy
-    allowed_scope = check_policy(agent.pubkey(), resource_id)
-    if allowed_scope is None:
-        decision = "DENIED"
-        reason = "NO_POLICY"
-        log_access_decision(agent.pubkey(), resource_id, action, decision, reason, timestamp)
-        return decision, reason
-    
-    if action in allowed_scope.split(','):
-        decision = "GRANTED"
-        reason = f"Scope: {allowed_scope}"
-        log_access_decision(agent.pubkey(), resource_id, action, decision, reason, timestamp)
-        return decision, reason
-    else:
-        decision = "DENIED"
-        reason = f"SCOPE_VIOLATION (has: {allowed_scope}, requested: {action})"
-        log_access_decision(agent.pubkey(), resource_id, action, decision, reason, timestamp)
-        return decision, reason
+        # ------------------------------------------------------------------
+        print("\n[1] Registering Agent A and setting its policy...")
+        await send(client, ix_register_agent(program_id, admin.pubkey(),
+                                             agent_a.pubkey(), group_id),
+                   [admin], "Register Agent A")
+        await send(client, ix_set_policy(program_id, admin.pubkey(), group_id,
+                                         action_allowed, True),
+                   [admin], "Set Policy (allow)")
+        print("  Registered and policy set.")
 
-# =========================================================================
-# SCENARIO TESTING
-# =========================================================================
-print("=" * 80)
-print("TAP-A2A COMPREHENSIVE SCENARIO TESTING WITH AUDIT LOGGING")
-print("=" * 80)
+        # ------------------------------------------------------------------
+        print("\n[2] Agent A performing an ALLOWED action...")
+        try:
+            await send(client, ix_log_access(program_id, agent_a.pubkey(), group_id,
+                                             action_allowed, epoch),
+                       [agent_a], "Agent A allowed access")
+            print("  PASS: access granted and logged.")
+            results["allowed_access"] = True
+        except Exception as e:
+            print(f"  FAIL: legitimate access was blocked: {e}")
+            results["allowed_access"] = False
 
-# Clear previous audit log
-try:
-    import os
-    os.remove(AUDIT_LOG_FILE)
-    print(f"🗑️  Cleared previous audit log: {AUDIT_LOG_FILE}\n")
-except FileNotFoundError:
-    pass
+        # ------------------------------------------------------------------
+        print("\n[3] Agent B (registered, no policy for its action)...")
+        await send(client, ix_register_agent(program_id, admin.pubkey(),
+                                             agent_b.pubkey(), group_id),
+                   [admin], "Register Agent B")
+        results["no_policy"] = await expect_denied(
+            send(client, ix_log_access(program_id, agent_b.pubkey(), group_id,
+                                       action_denied, epoch), [agent_b]),
+            expected_snippet="no matching policy",
+            label="Agent B (no policy)")
 
-agent_a = load_agent("agent_a_keypair.json")
-agent_b = load_agent("agent_b_keypair.json")
-agent_c = load_agent("agent_c_keypair.json")
-resource_id = "protected_database_1"
+        # ------------------------------------------------------------------
+        print("\n[4] Agent C (never registered)...")
+        results["unregistered"] = await expect_denied(
+            send(client, ix_log_access(program_id, agent_c.pubkey(), group_id,
+                                       action_allowed, epoch), [agent_c]),
+            expected_snippet="not registered",
+            label="Agent C (unregistered)")
 
-# Scenario 1: Agent A - Successful read access
-print("\n[SCENARIO 1] Agent A (scope: read) requests 'read' access")
-decision, reason = simulate_access(agent_a, resource_id, "read", 1001, int(time.time()))
-print(f"  Result: {decision} - {reason}")
+        # ------------------------------------------------------------------
+        print("\n[5] Replaying Agent A's nullifier for this epoch...")
+        results["replay"] = await expect_denied(
+            send(client, ix_log_access(program_id, agent_a.pubkey(), group_id,
+                                       action_allowed, epoch), [agent_a]),
+            expected_snippet="replay",
+            label="Replay of Agent A's access")
 
-# Scenario 2: Agent A - Scope violation (tries to write)
-print("\n[SCENARIO 2] Agent A (scope: read) attempts 'write' access")
-decision, reason = simulate_access(agent_a, resource_id, "write", 1002, int(time.time()))
-print(f"  Result: {decision} - {reason}")
+        # ------------------------------------------------------------------
+        # The scenario that actually tests the traceability property.
+        # A forged nullifier is what an adversary would really try: it
+        # sidesteps replay detection entirely unless the program checks
+        # the derivation.
+        print("\n[6] Agent A forging a random nullifier to evade traceability...")
+        forged = generate_bytes32()
+        results["nullifier_forgery"] = await expect_denied(
+            send(client, ix_log_access(program_id, agent_a.pubkey(), group_id,
+                                       action_allowed, epoch, nullifier=forged),
+                 [agent_a]),
+            expected_snippet="not the correct derivation",
+            label="Agent A (forged nullifier)")
 
-# Scenario 3: Agent B - Successful write access (broader scope)
-print("\n[SCENARIO 3] Agent B (scope: read,write) requests 'write' access")
-decision, reason = simulate_access(agent_b, resource_id, "write", 1003, int(time.time()))
-print(f"  Result: {decision} - {reason}")
+        # ------------------------------------------------------------------
+        print("\n[7] Rogue key attempting privileged operations...")
+        rogue_agent = Keypair()
+        results["rogue_register"] = await expect_denied(
+            send(client, ix_register_agent(program_id, rogue_admin.pubkey(),
+                                           rogue_agent.pubkey(), group_id),
+                 [rogue_admin]),
+            expected_snippet="not the configured protocol administrator",
+            label="Rogue admin (register agent)")
 
-# Scenario 4: Replay attack (reuse old timestamp)
-print("\n[SCENARIO 4] REPLAY ATTACK - Reusing old timestamp (>5 mins ago)")
-old_timestamp = int(time.time()) - 600 # 10 minutes ago
-decision, reason = simulate_access(agent_a, resource_id, "read", 1004, old_timestamp)
-print(f"  Result: {decision} - {reason}")
+        results["rogue_revoke"] = await expect_denied(
+            send(client, ix_revoke_agent(program_id, rogue_admin.pubkey(),
+                                         agent_a.pubkey()), [rogue_admin]),
+            expected_snippet="not the configured protocol administrator",
+            label="Rogue admin (revoke agent)")
 
-# Scenario 5: Invalid Signature (Agent B signs Agent A's payload)
-print("\n[SCENARIO 5] INVALID SIGNATURE - Agent B signs Agent A's payload")
-payload_str = f"{agent_a.pubkey()}|1005|{int(time.time())}|{resource_id}|read"
-payload_bytes = payload_str.encode('utf-8')
-fake_sig = agent_b.sign_message(payload_bytes) # Wrong signer!
-decision, reason = simulate_access(agent_a, resource_id, "read", 1005, int(time.time()), custom_sig=fake_sig)
-print(f"  Result: {decision} - {reason}")
+        # ------------------------------------------------------------------
+        print("\n[8] Policy revocation (allow -> deny) takes effect...")
+        await send(client, ix_set_policy(program_id, admin.pubkey(), group_id,
+                                         action_revocable, True),
+                   [admin], "Set Policy (allow)")
+        await send(client, ix_update_policy(program_id, admin.pubkey(), group_id,
+                                            action_revocable, False),
+                   [admin], "Update Policy (deny)")
+        results["policy_revocation"] = await expect_denied(
+            send(client, ix_log_access(program_id, agent_a.pubkey(), group_id,
+                                       action_revocable, epoch), [agent_a]),
+            expected_snippet="explicitly denies",
+            label="Access after policy flipped to deny")
 
-# Scenario 6: Agent C - Revoked
-print("\n[SCENARIO 6] Agent C (Revoked) requests 'read' access")
-decision, reason = simulate_access(agent_c, resource_id, "read", 1006, int(time.time()))
-print(f"  Result: {decision} - {reason}")
+        # ------------------------------------------------------------------
+        # A FRESH action hash is essential here. Anchor evaluates account
+        # constraints -- including `init` on trace_log -- before the handler
+        # body runs, so reusing action_allowed would fail with "already in
+        # use" (replay) rather than AgentRevoked, and the scenario would be
+        # silently testing the wrong thing.
+        print("\n[9] Revoking Agent A, then retrying access...")
+        await send(client, ix_set_policy(program_id, admin.pubkey(), group_id,
+                                         action_after_revoke, True),
+                   [admin], "Set Policy (allow, pre-revocation)")
+        await send(client, ix_revoke_agent(program_id, admin.pubkey(),
+                                           agent_a.pubkey()),
+                   [admin], "Revoke Agent A")
+        results["revoked_agent"] = await expect_denied(
+            send(client, ix_log_access(program_id, agent_a.pubkey(), group_id,
+                                       action_after_revoke, epoch), [agent_a]),
+            expected_snippet="revoked",
+            label="Revoked Agent A")
 
-# Scenario 7: Agent D - Unregistered
-print("\n[SCENARIO 7] Agent D (Unregistered) requests 'read' access")
-agent_d = Keypair() # Generate a random, unregistered agent
-decision, reason = simulate_access(agent_d, resource_id, "read", 1007, int(time.time()))
-print(f"  Result: {decision} - {reason}")
+        # ------------------------------------------------------------------
+        # Empirical counterpart of the impersonation_resistance lemma.
+        #
+        # Agent B signs the transaction but presents Agent A's
+        # AgentRecord. lib.rs seeds that account on [b"agent",
+        # agent.key()], so the record is cryptographically bound to the
+        # signer and Anchor rejects the mismatch during ACCOUNT
+        # VALIDATION -- before any handler logic runs. That ordering is
+        # why A's revoked state at this point is irrelevant to what is
+        # being tested.
+        #
+        # Note this is not a "malformed signature" test: the Solana
+        # runtime verifies signatures before the program is invoked, so
+        # a bad signature never reaches TAP-A2A. Presenting a valid
+        # signature over someone else's identity is the attack the
+        # program itself has to defeat.
+        print("\n[10] Agent B presenting Agent A's registration (impersonation)...")
+        results["impersonation"] = await expect_denied(
+            send(client, ix_log_access(program_id, agent_b.pubkey(), group_id,
+                                       action_allowed, epoch,
+                                       impersonate_as=agent_a.pubkey()),
+                 [agent_b]),
+            expected_snippet="does not belong to the signing agent",
+            label="Agent B impersonating Agent A")
 
-print("\n" + "=" * 80)
-print("SCENARIO TESTING COMPLETE")
-print(f"✅ All access decisions logged to: {AUDIT_LOG_FILE}")
-print("=" * 80)
+    # ----------------------------------------------------------------------
+    print("\n" + "=" * 70)
+    print("SCENARIO RESULTS")
+    print("=" * 70)
+    for name, ok in results.items():
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}")
 
-# Display audit log summary
-print(f"\n📊 AUDIT LOG SUMMARY:")
-with open(AUDIT_LOG_FILE, "r") as f:
-    audit_log = json.load(f)
-    print(f"   Total decisions logged: {len(audit_log)}")
-    granted = sum(1 for entry in audit_log if entry['decision'] == 'GRANTED')
-    denied = sum(1 for entry in audit_log if entry['decision'] == 'DENIED')
-    print(f"   Granted: {granted}")
-    print(f"   Denied: {denied}")
+    passed = sum(1 for ok in results.values() if ok)
+    total = len(results)
+    print(f"\n{passed}/{total} scenarios passed.")
+
+    if passed != total:
+        print("SUITE FAILED — do not cite these results in the dissertation.")
+        return 1
+    print("SUITE PASSED.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))
