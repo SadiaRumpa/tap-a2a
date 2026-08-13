@@ -213,6 +213,10 @@ echo "[3d/5] Audit trail and communication overhead..."
 python3 audit_overhead_experiment.py > "$RESULTS_DIR/audit_overhead_results.txt" 2>&1
 record "audit trail + overhead" $?
 
+echo "[3e/5] Peer-to-peer agent communication..."
+python3 peer_scenario_runner.py > "$RESULTS_DIR/peer_scenario_results.txt" 2>&1
+record "peer-to-peer A2A" $?
+
 echo "[4/5] Agentic orchestration..."
 python3 agentic_orchestrator.py > "$RESULTS_DIR/agentic_orchestration_results.txt" 2>&1
 record "agentic orchestration" $?

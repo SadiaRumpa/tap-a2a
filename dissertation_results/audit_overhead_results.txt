@@ -1,0 +1,80 @@
+========================================================================
+TAP-A2A — COMMUNICATION OVERHEAD AND AUDIT-TRAIL COMPLETENESS
+========================================================================
+Protocol already initialised (config A5cBnknUC6h24LYMpSXuuEvG9qmcwWdCF1BvXutyxzFP).
+Program: 7Bai6A8ANjhLcGHPWQXExAbPRYZ9jUxtFEzQq3FgDiDK
+
+========================================================================
+PART 1 — COMMUNICATION OVERHEAD
+========================================================================
+
+  Signed payload (canonical JSON) :   292 bytes
+  Ed25519 signature               :    64 bytes
+  Total on the wire               :   356 bytes
+  Round trips per authorisation   :     1
+
+  Field breakdown:
+    capability     15 bytes
+    expires_at     10 bytes
+    issued_at      10 bytes
+    nonce          34 bytes
+    recipient      46 bytes
+    result          2 bytes
+    sender         46 bytes
+    task_id        34 bytes
+
+  Comparison of protocol shape (NOT a latency comparison —
+  the identity baseline runs on a public testnet and this
+  prototype on a local validator, so wall-clock times measure
+  network topology rather than design):
+    TAP-A2A A2A request      : 1 round trip, 356 bytes
+    Challenge-response VP    : 2+ round trips, ~1.23 KB per credential
+  The single-pass design trades the freshness a verifier-chosen
+  nonce would give for a round trip; freshness is instead
+  provided by the sender's nonce plus a bounded TTL.
+  PASS: communication_overhead_measured — 356 bytes, 1 round trip
+
+========================================================================
+PART 2 — AUDIT-TRAIL COMPLETENESS
+========================================================================
+
+[2a] Out-of-scope request is refused AND anchored on-chain
+  PASS: denial_refused — REJECTED: 'DELETE_RECORDS' is outside this agent's least-pri
+  PASS: denial_anchored_on_chain — reason 1 = capability outside worker scope
+       record size: 122 bytes, rent 0.001740 SOL
+
+[2b] An auditor can attribute the refusal without privileged access
+  PASS: denial_independently_verifiable — address recomputed from public inputs
+
+[2c] Repeated identical refusals do not grow the log
+  PASS: denial_storage_bounded — one record per (worker, requester, action, epoch)
+
+[2d] Authorised access still writes its access trace
+  PASS: grant_still_traced — ACCEPTED: worker executed READ_DATABASE; trace logged on-cha
+
+========================================================================
+RESULTS
+========================================================================
+  PASS  communication_overhead_measured
+  PASS  denial_refused
+  PASS  denial_anchored_on_chain
+  PASS  denial_independently_verifiable
+  PASS  denial_storage_bounded
+  PASS  grant_still_traced
+
+6/6 checks passed.
+
+INTERPRETATION
+
+  The audit trail now records both outcomes. A refused escalation leaves
+  evidence naming the requester, the capability sought, the reason and the
+  epoch -- written by the refusing worker, so an unregistered or hostile
+  requester cannot write to the log at all.
+
+  Storage is bounded by the same construction used for access records: the
+  denial address is derived from (worker, requester, action, epoch), so a
+  repeated attacker produces one record per epoch, not one per attempt.
+  The FIRST refusal in an epoch is the one evidenced -- a deliberate trade
+  of forensic granularity against a rent-exhaustion surface.
+
+EXPERIMENT PASSED.

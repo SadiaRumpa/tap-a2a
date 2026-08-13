@@ -36,6 +36,7 @@ KEEP=(
   "bypass_experiment.py"
   "tap_a2a_planner.py"
   "audit_overhead_experiment.py"
+  "peer_scenario_runner.py"
   # Formal verification
   "tap_a2a.spthy"
   "verify_tap_a2a.py"

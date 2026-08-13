@@ -1,6 +1,7 @@
 TAP-A2A benchmark — 100 iterations
 
-Protocol already initialised (config A5cBnknUC6h24LYMpSXuuEvG9qmcwWdCF1BvXutyxzFP).
+Initialising protocol with admin Cw92kFLvZfPKAoLAkKdyxfPqQQHqYCdKKR1MnogFMwLp...
+Protocol initialised.
 Airdropping 10 SOL to the benchmark agent...
 Registering agent...
 Provisioning 100 action policies (setup, not measured)...
@@ -28,10 +29,10 @@ Commitment level: confirmed
 ========================================================================
 Stage                           Min       Avg       P50       P95       Max
 ------------------------------------------------------------------------
-Ed25519 verify (ms)            0.21      0.34      0.23      0.40      6.82
-Policy read (ms)               2.80      4.04      3.38      6.53     28.72
-On-chain decision (ms)       505.49    605.13    507.16   1011.49   2018.28
-Compute units              14560.00  16135.00  15310.00  20560.00  26560.00
+Ed25519 verify (ms)            0.21      0.31      0.23      0.36      5.82
+Policy read (ms)               2.76      3.63      3.30      4.73      9.28
+On-chain decision (ms)       505.59    558.07    506.90   1009.43   1010.49
+Compute units              14560.00  16105.00  16060.00  19060.00  23560.00
 ========================================================================
 
 Stages are measured independently and are NOT additive.

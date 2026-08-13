@@ -1,0 +1,74 @@
+========================================================================
+TAP-A2A — PEER-TO-PEER AGENT COMMUNICATION
+========================================================================
+Protocol already initialised (config A5cBnknUC6h24LYMpSXuuEvG9qmcwWdCF1BvXutyxzFP).
+Program: 7Bai6A8ANjhLcGHPWQXExAbPRYZ9jUxtFEzQq3FgDiDK
+
+  reader   -> READ_DATABASE
+  writer   -> WRITE_REPORT
+  archiver -> WRITE_REPORT, EXPORT_PII   (privileged peer)
+  (reader holds NO write or export capability)
+
+========================================================================
+PART 1 — A PEER-TO-PEER PIPELINE
+========================================================================
+The orchestrator starts the work; the reader then hands its
+output DIRECTLY to the writer without routing back through
+the orchestrator.
+
+[1a] orchestrator -> reader : READ_DATABASE
+  PASS: orchestrator_to_reader — ACCEPTED: reader executed READ_DATABASE; trace logged on-chain.
+
+[1b] reader -> writer : WRITE_REPORT, carrying the read result
+  PASS: peer_to_peer_handoff — ACCEPTED: writer executed WRITE_REPORT using input from rows=1042,digest=a91f; t
+       The result is inside the signed envelope, so the
+       writer can attribute the input to the reader.
+
+========================================================================
+PART 2 — THE CONFUSED DEPUTY
+========================================================================
+
+[2a] reader -> archiver : EXPORT_PII  (default worker policy)
+     The reader holds no export capability. The archiver does.
+     A worker that checks only its own scope will comply.
+  PASS: confused_deputy_reproduced — archiver acted for an unauthorised requester
+       The reader has exercised EXPORT_PII through a peer.
+       Least privilege held for each agent individually and
+       still failed for the system.
+
+[2b] Same request, archiver enforcing requester scope
+  PASS: confused_deputy_blocked — REJECTED: requester is not itself authorised for 'EXPORT_PII' — refusing to act 
+
+[2c] A legitimate peer request still succeeds under the check
+  PASS: legitimate_peer_request_allowed — ACCEPTED: archiver_strict executed WRITE_REPORT using input from draft
+
+========================================================================
+RESULTS
+========================================================================
+  PASS  orchestrator_to_reader
+  PASS  peer_to_peer_handoff
+  PASS  confused_deputy_reproduced
+  PASS  confused_deputy_blocked
+  PASS  legitimate_peer_request_allowed
+
+5/5 checks passed.
+
+INTERPRETATION
+
+  Part 1 shows agents communicating directly: the reader hands its output
+  to the writer inside a signed envelope, and the writer applies the same
+  verification it would to any sender. There is no privileged party.
+
+  Part 2 is the finding. Moving from star dispatch to peer-to-peer
+  communication introduces the confused deputy: per-agent least privilege
+  is individually intact and collectively insufficient, because a worker
+  that checks only its own scope lends its authority to whoever asks.
+  Requiring the REQUESTER to hold the capability closes it, at the cost of
+  making genuine privilege delegation impossible -- an honest trade for a
+  system that dispatches rather than delegates.
+
+  Note 2a is expected to SUCCEED. Reporting the attack working under the
+  default configuration is the point; a suite that only showed the
+  defended case would not establish that the defence does anything.
+
+SUITE PASSED.

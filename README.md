@@ -149,6 +149,7 @@ tap_a2a_messaging.py          signed agent-to-agent message layer (objective 3)
 a2a_scenario_runner.py        nine A2A message-layer security scenarios
 bypass_experiment.py          defence-in-depth and trace-storage experiment
 audit_overhead_experiment.py  audit-trail completeness and message overhead
+peer_scenario_runner.py       peer-to-peer A2A and confused-deputy scenarios
 tap_a2a_trs.py                Fujisaki-Suzuki traceable ring signatures
 trs_benchmark.py              ring size vs cost benchmark
 generate_graphs.py            figures from benchmark CSV

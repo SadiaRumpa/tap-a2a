@@ -5,24 +5,24 @@ Admin: Cw92kFLvZfPKAoLAkKdyxfPqQQHqYCdKKR1MnogFMwLp | Program: 7Bai6A8ANjhLcGHPW
 
 Protocol already initialised (config A5cBnknUC6h24LYMpSXuuEvG9qmcwWdCF1BvXutyxzFP).
 
-Agent A (allowed):      7Lbx2Sm8DGEFRgz75jB1TCq4JGzXgBJcHmS3osP1wZrf
-Agent B (no policy):    D8c4Q68cQGpyXmosaD1RMGEKwzJWr1Ad7b1padbw2aiR
-Agent C (unregistered): AbFHy4ngL2cgNBLRXXTk3bugFxnSBXvXko3CL4CbkShA
-Rogue admin:            GYWHoYJrR979qYMdYbqZjwQZSVgZNMM2twSCnfXCYFCu
+Agent A (allowed):      8gBVfrcoMHUNAmyETZWn8gRzDT14tmN9cKu6zG6Lbiac
+Agent B (no policy):    94EwpH4a5Z64vLvwVQysHZx6WSdN2iP7xyxRSvyfWqBd
+Agent C (unregistered): 3YoLwyBzfLJCj1XF3BmNaxvp8xHrdkpxHn5Qq3McWAF6
+Rogue admin:            GrXjCBQv1usdrC8HJarFy4Rvq4JvrLS4w8jrmeGsSxwM
 
 Airdropping...
 
 [1] Registering Agent A and setting its policy...
-    [Register Agent A] Latency: 1011.64 ms | CUs: 11281
-    [Set Policy (allow)] Latency: 507.69 ms | CUs: 9409
+    [Register Agent A] Latency: 507.22 ms | CUs: 12781
+    [Set Policy (allow)] Latency: 1009.77 ms | CUs: 9409
   Registered and policy set.
 
 [2] Agent A performing an ALLOWED action...
-    [Agent A allowed access] Latency: 506.61 ms | CUs: 23560
+    [Agent A allowed access] Latency: 506.69 ms | CUs: 16060
   PASS: access granted and logged.
 
 [3] Agent B (registered, no policy for its action)...
-    [Register Agent B] Latency: 506.35 ms | CUs: 12781
+    [Register Agent B] Latency: 506.98 ms | CUs: 11281
   PASS: Agent B (no policy) blocked -> DENIED: No matching policy for this agent group/action (least-privilege enforced).
 
 [4] Agent C (never registered)...
@@ -39,13 +39,13 @@ Airdropping...
   PASS: Rogue admin (revoke agent) blocked -> DENIED: Signer is not the configured protocol administrator.
 
 [8] Policy revocation (allow -> deny) takes effect...
-    [Set Policy (allow)] Latency: 505.93 ms | CUs: 9409
-    [Update Policy (deny)] Latency: 506.76 ms | CUs: 5563
+    [Set Policy (allow)] Latency: 508.06 ms | CUs: 13909
+    [Update Policy (deny)] Latency: 506.72 ms | CUs: 5563
   PASS: Access after policy flipped to deny blocked -> DENIED: Policy explicitly denies this action.
 
 [9] Revoking Agent A, then retrying access...
-    [Set Policy (allow, pre-revocation)] Latency: 1032.74 ms | CUs: 10909
-    [Revoke Agent A] Latency: 1008.57 ms | CUs: 7452
+    [Set Policy (allow, pre-revocation)] Latency: 506.29 ms | CUs: 9409
+    [Revoke Agent A] Latency: 506.16 ms | CUs: 7452
   PASS: Revoked Agent A blocked -> DENIED: Agent has been REVOKED by the administrator.
 
 [10] Agent B presenting Agent A's registration (impersonation)...

@@ -3,7 +3,6 @@ TAP-A2A — LAYER BYPASS AND STORAGE COST EXPERIMENT
 ========================================================================
 Protocol already initialised (config A5cBnknUC6h24LYMpSXuuEvG9qmcwWdCF1BvXutyxzFP).
 Program: 7Bai6A8ANjhLcGHPWQXExAbPRYZ9jUxtFEzQq3FgDiDK
-Validator clock offset: -3147s from wall time (epochs derived from the chain's clock).
 
 Setup: one authorised agent, one agent in a group with no policy.
        READ_DATABASE allowed for the first group only.

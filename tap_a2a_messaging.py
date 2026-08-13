@@ -102,11 +102,11 @@ class TaskMessage:
     """
 
     __slots__ = ("sender", "recipient", "capability", "task_id",
-                 "nonce", "issued_at", "expires_at", "signature")
+                 "nonce", "issued_at", "expires_at", "result", "signature")
 
     def __init__(self, sender: Pubkey, recipient: Pubkey, capability: str,
                  task_id: str, nonce: str, issued_at: int, expires_at: int,
-                 signature: bytes = None):
+                 result: str = "", signature: bytes = None):
         self.sender = sender
         self.recipient = recipient
         self.capability = capability
@@ -114,6 +114,12 @@ class TaskMessage:
         self.nonce = nonce
         self.issued_at = issued_at
         self.expires_at = expires_at
+        # Result data carried between agents -- e.g. what the reader
+        # retrieved, passed to the writer. Covered by the signature, so an
+        # intermediary cannot alter what one agent claims to have produced.
+        # Named 'result' because payload() is already the method returning
+        # the canonical bytes this field is part of.
+        self.result = result
         self.signature = signature
 
     def payload(self) -> bytes:
@@ -127,6 +133,7 @@ class TaskMessage:
             "nonce": self.nonce,
             "issued_at": self.issued_at,
             "expires_at": self.expires_at,
+            "result": self.result,
         }, sort_keys=True, separators=(",", ":")).encode()
 
     def __repr__(self):
@@ -135,7 +142,8 @@ class TaskMessage:
 
 
 def compose(sender_kp: Keypair, recipient: Pubkey, capability: str,
-            task_id: str = None, ttl: int = MESSAGE_TTL_SECONDS) -> TaskMessage:
+            task_id: str = None, ttl: int = MESSAGE_TTL_SECONDS,
+            result: str = "") -> TaskMessage:
     """Build and sign a task message."""
     now = int(time.time())
     msg = TaskMessage(
@@ -146,6 +154,7 @@ def compose(sender_kp: Keypair, recipient: Pubkey, capability: str,
         nonce=uuid.uuid4().hex,
         issued_at=now,
         expires_at=now + ttl,
+        result=result,
     )
     msg.signature = bytes(sender_kp.sign_message(msg.payload()))
     return msg
@@ -163,12 +172,32 @@ class Worker:
     """
 
     def __init__(self, agent_id: str, keypair: Keypair, group_id,
-                 program_id: Pubkey):
+                 program_id: Pubkey, require_requester_scope: bool = False):
         self.agent_id = agent_id
         self.keypair = keypair
         self.group_id = group_id
         self.program_id = program_id
         self._seen_nonces = set()
+
+        # CONFUSED-DEPUTY DEFENCE.
+        #
+        # By default a worker checks only its OWN scope: it will act on any
+        # capability it holds, for anyone who asks. In a star topology where
+        # only a trusted orchestrator dispatches, that is sufficient.
+        #
+        # Once agents message each other directly it is not. A low-privilege
+        # agent can ask a high-privilege peer to exercise a capability the
+        # requester does not hold, and the peer -- checking only itself --
+        # complies. The requester has borrowed authority it was never
+        # granted. That is the classic confused deputy.
+        #
+        # With this flag the worker additionally requires the REQUESTER's
+        # own group to hold the capability, so a peer can only ask for what
+        # it could already do itself. The cost is that genuine privilege
+        # delegation becomes impossible -- which is honest, since this
+        # system dispatches rather than delegates.
+        self.require_requester_scope = require_requester_scope
+        self.last_result = None
 
     # -- individual checks, separated so failures are attributable ------
     def _check_signature(self, msg: TaskMessage):
@@ -229,6 +258,47 @@ class Worker:
                 f"least-privilege scope (no policy for its group).",
                 DenialReason.OUT_OF_SCOPE)
 
+    async def _check_requester_scope(self, client, msg: TaskMessage):
+        """
+        Optional: the requester must also hold the capability.
+
+        Only meaningful for peer-to-peer requests. A request from an agent
+        whose own group lacks the capability is an attempt to exercise
+        authority through someone else.
+        """
+        info = await client.get_account_info(agent_pda(self.program_id, msg.sender))
+        if info.value is None:
+            raise A2AError("REJECTED: sender is not a registered agent on-chain.",
+                           DenialReason.NOT_REGISTERED)
+        sender_group = parse_agent_record(bytes(info.value.data)[8:])["agent_group_id"]
+
+        pda = policy_pda(self.program_id, sender_group, action_hash(msg.capability))
+        if (await client.get_account_info(pda)).value is None:
+            raise A2AError(
+                f"REJECTED: requester is not itself authorised for "
+                f"'{msg.capability}' — refusing to act as its deputy.",
+                DenialReason.OUT_OF_SCOPE)
+
+    # -- sending, for peer-to-peer work ---------------------------------
+    async def send_to(self, client, peer: "Worker", capability: str,
+                      task_id: str = None, result: str = "") -> str:
+        """
+        Ask another worker to perform a capability, passing along a result.
+
+        This is what makes the topology agent-to-agent rather than
+        star-shaped: a worker that has finished its step hands the output
+        to the peer that needs it, without routing back through the
+        orchestrator. The peer applies exactly the same verification it
+        would to an orchestrator's request -- there is no privileged
+        sender.
+        """
+        msg = compose(self.keypair, peer.keypair.pubkey(), capability,
+                      task_id=task_id, result=result)
+        try:
+            return await peer.handle(client, msg)
+        except A2AError as e:
+            return str(e)
+
     # -- public entry point --------------------------------------------
     async def _anchor_denial(self, client, msg: TaskMessage, reason: int):
         """
@@ -273,6 +343,8 @@ class Worker:
             self._check_nonce(msg)
             await self._check_sender_registered(client, msg)
             await self._check_within_my_scope(client, msg)
+            if self.require_requester_scope:
+                await self._check_requester_scope(client, msg)
         except A2AError as e:
             if log_denials and e.reason is not None:
                 await self._anchor_denial(client, msg, e.reason)
@@ -288,8 +360,11 @@ class Worker:
                        ix_log_access(self.program_id, self.keypair.pubkey(),
                                      self.group_id, action, current_epoch()),
                        [self.keypair])
-            return (f"ACCEPTED: {self.agent_id} executed {msg.capability}; "
-                    f"trace logged on-chain.")
+            self.last_result = (f"{self.agent_id}:{msg.capability}"
+                                + (f" <- {msg.result}" if msg.result else ""))
+            return (f"ACCEPTED: {self.agent_id} executed {msg.capability}"
+                    + (f" using input from {msg.result}" if msg.result else "")
+                    + "; trace logged on-chain.")
         except Exception as e:
             # The chain is the second, independent enforcement point.
             return f"ON-CHAIN {classify_error(e)}"
