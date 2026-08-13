@@ -17,6 +17,20 @@ echo "=============================================="
 echo ""
 echo "[1/5] Secrets"
 # The local wallet must never be tracked, in the current tree or in history.
+if git ls-files | grep -qE '(^|/)\.env$'; then
+    bad ".env is TRACKED — it holds API keys. Untrack it and ROTATE the key:"
+    bad "      git rm --cached .env  &&  revoke the key at the provider"
+else
+    ok "no .env tracked"
+fi
+
+if git log --all --full-history --name-only --pretty=format: 2>/dev/null \
+     | grep -qE '(^|/)\.env$'; then
+    bad ".env appears in git HISTORY — ROTATE the API key immediately."
+else
+    ok "no .env in history"
+fi
+
 if git ls-files | grep -qE '(^|/)id\.json$'; then
     bad "id.json is tracked — remove it: git rm --cached <path>"
 else

@@ -195,6 +195,69 @@ pub mod tap_a2a {
 
         Ok(())
     }
+
+    /// Record a REFUSED request.
+    ///
+    /// The audit trail was previously grant-only: a request refused by a
+    /// worker's own policy check never reached the chain, so an auditor
+    /// saw a clean history of legitimate accesses and no evidence that an
+    /// escalation had been attempted. In an agentic setting the refusals
+    /// are where the attack evidence lives.
+    ///
+    /// WHO MAY WRITE, AND WHY IT MATTERS. The record is submitted and
+    /// signed by the REFUSING WORKER, which must itself be a registered,
+    /// active agent. The requester is recorded as data, not as a signer,
+    /// so an unregistered or hostile requester cannot write to the log at
+    /// all. If any party could log denials, the log would become a spam
+    /// and rent-exhaustion surface. This bounds writers to agents the
+    /// administrator has admitted, who have no incentive to flood it.
+    ///
+    /// The denial nullifier is recomputed on-chain exactly as the access
+    /// nullifier is, so a worker records at most one denial per
+    /// (worker, requester, action, epoch). That caps storage growth: a
+    /// repeated attacker cannot inflate the log without bound, and the
+    /// FIRST refusal in an epoch is the one evidenced.
+    pub fn log_denied_request(
+        ctx: Context<LogDenial>,
+        requester: Pubkey,
+        action_hash: [u8; 32],
+        denial_nullifier: [u8; 32],
+        epoch: u64,
+        reason: u8,
+    ) -> Result<()> {
+        let worker = &ctx.accounts.agent_record;
+        require!(worker.is_active, CustomError::AgentRevoked);
+        require!((1..=7).contains(&reason), CustomError::InvalidDenialReason);
+
+        let now = Clock::get()?.unix_timestamp;
+        let current_epoch = (now / EPOCH_SECONDS) as u64;
+        require!(
+            epoch == current_epoch || epoch + 1 == current_epoch,
+            CustomError::InvalidEpoch
+        );
+
+        let expected = hashv(&[
+            b"tap-a2a-denial",
+            ctx.accounts.worker.key().as_ref(),
+            requester.as_ref(),
+            action_hash.as_ref(),
+            &epoch.to_le_bytes(),
+        ])
+        .to_bytes();
+        require!(denial_nullifier == expected, CustomError::InvalidNullifier);
+
+        let rec = &mut ctx.accounts.denial_log;
+        rec.worker_pubkey = ctx.accounts.worker.key();
+        rec.requester_pubkey = requester;
+        rec.action_hash = action_hash;
+        rec.epoch = epoch;
+        rec.reason = reason;
+        rec.timestamp = now;
+        rec.bump = ctx.bumps.denial_log;
+
+        msg!("TAP-A2A: request REFUSED and logged. Reason code {}", reason);
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -372,6 +435,34 @@ pub struct LogAccess<'info> {
     pub system_program: Program<'info, System>,
 }
 
+#[derive(Accounts)]
+#[instruction(requester: Pubkey, action_hash: [u8; 32], denial_nullifier: [u8; 32])]
+pub struct LogDenial<'info> {
+    /// The worker that refused the request. Pays for the record.
+    #[account(mut)]
+    pub worker: Signer<'info>,
+
+    /// Binds the record to a registered agent: the seeds derive from the
+    /// signer, so a worker cannot file a denial under another identity.
+    #[account(
+        seeds = [b"agent", worker.key().as_ref()],
+        bump = agent_record.bump
+    )]
+    pub agent_record: Account<'info, AgentRecord>,
+
+    #[account(
+        init,
+        payer = worker,
+        space = 8 + DenialLog::INIT_SPACE,
+        seeds = [b"denial", denial_nullifier.as_ref()],
+        bump
+    )]
+    pub denial_log: Account<'info, DenialLog>,
+
+    pub system_program: Program<'info, System>,
+}
+
+
 // ============================================================================
 // DATA ACCOUNTS
 // ============================================================================
@@ -415,6 +506,29 @@ pub struct TraceabilityLog {
     pub bump: u8,
 }
 
+/// A refused request. Written by the refusing worker, never the requester.
+///
+/// Reason codes:
+///   1 capability outside the worker's policy scope
+///   2 policy explicitly denies the action
+///   3 requester not registered on-chain
+///   4 requester revoked
+///   5 message expired
+///   6 message replayed (nonce reuse)
+///   7 signature verification failed
+#[account]
+#[derive(InitSpace)]
+pub struct DenialLog {
+    pub worker_pubkey: Pubkey,
+    pub requester_pubkey: Pubkey,
+    pub action_hash: [u8; 32],
+    pub epoch: u64,
+    pub reason: u8,
+    pub timestamp: i64,
+    pub bump: u8,
+}
+
+
 // ============================================================================
 // CUSTOM ERRORS
 // ============================================================================
@@ -448,4 +562,7 @@ pub enum CustomError {
 
     #[msg("Signer is not the configured protocol administrator.")]
     UnauthorizedAdmin, // 6007
+
+    #[msg("Denial reason code is outside the defined range 1-7.")]
+    InvalidDenialReason, // 6008
 }

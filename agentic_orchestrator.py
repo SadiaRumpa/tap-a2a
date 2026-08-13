@@ -1,4 +1,67 @@
+"""
+TAP-A2A Agentic Orchestration
 
+An orchestrator decomposes a task and dispatches each step to a worker
+agent AS A SIGNED A2A MESSAGE (see tap_a2a_messaging.py). Every worker
+holds its own on-chain identity and its own narrow policy scope, so each
+step crosses the authentication and authorisation boundary twice: once at
+the receiving worker, which verifies the message and checks the capability
+against its own policy, and again on-chain when the worker submits the
+access.
+
+The orchestrator has an on-chain identity of its own but NO data
+capabilities. It can ask; it cannot act. Any authority exercised belongs
+to the worker that exercised it.
+
+SCOPE -- READ THIS BEFORE CITING IT. The orchestrator DISPATCHES; it
+does not DELEGATE. It asks a worker to exercise authority the worker
+already holds under standing policy written in advance by the
+administrator; it does not grant, attenuate or forward authority of its
+own. There are no capability tokens and no delegation chain, so
+delegation-without-escalation is NOT demonstrated -- that needs on-chain
+support and is future work.
+
+What IS demonstrated is that policy enforcement sits BELOW the planner: a
+compromised or prompt-injected planner cannot widen a worker's authority,
+because the worker refuses out-of-scope capabilities before touching the
+chain and the program refuses them again independently.
+
+WHY THIS WAS REBUILT
+--------------------
+The previous version was a single hardcoded string match: if the prompt
+contained "READ_DATABASE" it returned a tool call whose arguments the
+caller had already filled in. There was no plan, no delegation and no
+second agent, so least-privilege was never actually exercised -- an
+agent either asked for the one thing it was allowed, or it did not ask.
+The line printed as "LLM Reasoning" was a literal print statement.
+
+It also passed the agent's full 64-byte keypair through the tool-call
+arguments. With a real model that ships the signing key to the model
+provider. Tools here take an agent_id; signing happens locally in the
+wallet registry and secret material never enters a tool payload or a
+prompt.
+
+WHAT THIS DEMONSTRATES
+----------------------
+1. Policy enforcement below the planner -- the orchestrator holds broad
+   authority but cannot grant a worker anything the worker's own
+   on-chain policy does not already permit.
+2. Prompt injection resistance -- scenario 2 feeds the planner a task
+   description carrying an injected instruction. The planner obeys it.
+   The chain refuses it anyway. That separation is the entire argument
+   for putting enforcement below the model.
+
+PLANNING IS MODEL-DRIVEN. The planner is a language model invoked through
+LangChain (see tap_a2a_planner.py). It reads the task text and chooses
+which capabilities to request -- which is precisely why it is the
+untrusted component: that text may be attacker-influenced.
+
+A deterministic keyword planner is retained for runs that must be
+byte-identical (benchmarks, regression). The run prints which planner was
+used, and falls back only when no model backend is configured -- loudly,
+because a keyword run reported as model-driven would misrepresent the
+result.
+"""
 import asyncio
 import sys
 
@@ -10,6 +73,7 @@ from tap_a2a_common import (
 )
 from tap_a2a_client import rpc_client, load_admin, send, ensure_initialized, airdrop, sync_clock
 from tap_a2a_messaging import A2AError, Orchestrator, Worker
+from tap_a2a_planner import build_planner
 
 
 # ----------------------------------------------------------------------
@@ -46,7 +110,24 @@ REGISTRY = WalletRegistry()
 
 async def dispatch_over_a2a(client, orchestrator, workers: dict,
                             agent_id: str, capability: str) -> str:
+    """
+    Send a signed task message from the orchestrator to a worker.
 
+    This is the only path by which the orchestrator can cause anything to
+    happen. It never submits a transaction itself and never touches a
+    worker's key: it composes a signed TaskMessage naming the capability,
+    and the WORKER decides whether to act.
+
+    The worker verifies the signature, that the sender is a registered
+    and unrevoked agent on-chain, that the message is fresh and unreplayed,
+    and -- the part that matters for least privilege -- that the capability
+    falls inside its OWN on-chain policy scope. Only then does it submit
+    the access, which the program checks again independently.
+
+    So a planner that has been talked into requesting DELETE_RECORDS
+    cannot obtain it: the worker refuses before the chain is touched, and
+    the chain would refuse anyway.
+    """
     if agent_id not in workers:
         return f"DENIED: unknown agent '{agent_id}'."
     try:
@@ -55,33 +136,20 @@ async def dispatch_over_a2a(client, orchestrator, workers: dict,
         return str(e)
 
 
-# ----------------------------------------------------------------------
-# Deterministic planner (test double, not a language model).
-# ----------------------------------------------------------------------
-class DeterministicPlanner:
-
-
-    CAPABILITY_KEYWORDS = {
-        "READ_DATABASE": ("reader", ["read the database", "read_database", "gather data"]),
-        "WRITE_REPORT": ("writer", ["write the report", "write_report", "produce a report"]),
-        "DELETE_RECORDS": ("reader", ["delete", "purge", "wipe"]),
-        "EXPORT_PII": ("writer", ["export customer", "export pii", "exfiltrate"]),
-    }
-
-    def plan(self, task: str):
-        """Return an ordered list of (role, capability) steps."""
-        text = task.lower()
-        steps = []
-        for capability, (role, keywords) in self.CAPABILITY_KEYWORDS.items():
-            if any(k in text for k in keywords):
-                steps.append((role, capability))
-        return steps
-
-
 async def run_scenario(client, program_id, planner, orchestrator, workers,
                        title: str, task: str,
                        roster: dict, expected_denials: int) -> bool:
+    """
+    `roster` maps a planner role ("reader"/"writer") to a concrete
+    registered agent id.
 
+    Scenarios take their own roster because the nullifier is bound to
+    (agent, group, action, epoch): re-running the same capability with
+    the same agent inside one epoch is a replay by construction, and the
+    program correctly refuses it. Reusing one pair of workers across
+    scenarios would therefore make every scenario after the first
+    register spurious denials.
+    """
     print("\n" + "=" * 72)
     print(title)
     print("=" * 72)
@@ -115,7 +183,7 @@ async def run_scenario(client, program_id, planner, orchestrator, workers,
 
 async def main() -> int:
     program_id = load_program_id()
-    planner = DeterministicPlanner()
+    planner, model_driven = build_planner()
     results = []
 
     async with rpc_client() as client:

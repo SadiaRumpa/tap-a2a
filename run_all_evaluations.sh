@@ -209,6 +209,10 @@ echo "[3c/5] Layer bypass and storage experiment..."
 python3 bypass_experiment.py > "$RESULTS_DIR/bypass_experiment_results.txt" 2>&1
 record "layer bypass experiment" $?
 
+echo "[3d/5] Audit trail and communication overhead..."
+python3 audit_overhead_experiment.py > "$RESULTS_DIR/audit_overhead_results.txt" 2>&1
+record "audit trail + overhead" $?
+
 echo "[4/5] Agentic orchestration..."
 python3 agentic_orchestrator.py > "$RESULTS_DIR/agentic_orchestration_results.txt" 2>&1
 record "agentic orchestration" $?

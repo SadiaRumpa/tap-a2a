@@ -34,6 +34,8 @@ KEEP=(
   "tap_a2a_messaging.py"
   "a2a_scenario_runner.py"
   "bypass_experiment.py"
+  "tap_a2a_planner.py"
+  "audit_overhead_experiment.py"
   # Formal verification
   "tap_a2a.spthy"
   "verify_tap_a2a.py"
@@ -46,6 +48,7 @@ KEEP=(
   "README.md"
   "requirements.txt"
   ".gitignore"
+  ".env.example"
   ".prettierignore"
   "package.json"
   "yarn.lock"
@@ -58,6 +61,7 @@ KEEP=(
 
 # Superseded by the current suite; each is dead code or a stale artefact.
 DELETE_FILES=(
+  # .env holds API keys. It must exist locally and never be committed.
   "config.py"                # deprecated shim; everything uses tap_a2a_common
   "performance_test.py"      # stale program ID + wrong struct layout; cannot run
   "benchmark_runner.py"      # superseded by full_gateway_benchmark.py
