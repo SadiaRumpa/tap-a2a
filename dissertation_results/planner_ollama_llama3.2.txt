@@ -1,0 +1,7 @@
+[200~cat > dissertation_results/planner_ollama_llama3.2.json <<'EOF'
+{
+  "backend": "ollama",
+  "model": "llama3.2",
+  "repeats": 3,
+  "injected_complied": 3
+}
