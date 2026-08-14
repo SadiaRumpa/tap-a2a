@@ -1,0 +1,6 @@
+{
+  "backend": "ollama",
+  "model": "llama3.2",
+  "repeats": 3,
+  "injected_complied": 3
+}
