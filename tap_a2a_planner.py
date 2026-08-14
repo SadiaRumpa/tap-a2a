@@ -34,8 +34,10 @@ BACKENDS
 --------
 Set TAP_A2A_LLM to choose:
 
-    ollama    (default) local model, no API key, no cost
+    ollama    local model, no API key, no cost
               install: https://ollama.com  then: ollama pull llama3.2
+              Set OLLAMA_HOST to use a REMOTE Ollama server (e.g. a Colab
+              VM exposed over a tunnel) instead of localhost.
     openai    needs OPENAI_API_KEY (paid; account must hold credit)
     anthropic needs ANTHROPIC_API_KEY (paid)
     groq      needs GROQ_API_KEY — free tier, key from console.groq.com
@@ -152,7 +154,18 @@ class LLMPlanner:
                     "pip install langchain-ollama, and install Ollama from "
                     "https://ollama.com then: ollama pull llama3.2") from e
             self.model = self.model or "llama3.2"
-            return ChatOllama(model=self.model, temperature=self.temperature)
+            # OLLAMA_HOST lets the server live elsewhere — a Colab VM, a lab
+            # machine, any host reachable over HTTP. The prototype was
+            # developed on hardware where the Ollama runtime will not start,
+            # so the model layer is deliberately decoupled from the machine
+            # running the chain and the agents.
+            host = os.environ.get("OLLAMA_HOST", "").strip()
+            kwargs = {"model": self.model, "temperature": self.temperature}
+            if host:
+                if not host.startswith(("http://", "https://")):
+                    host = "http://" + host
+                kwargs["base_url"] = host.rstrip("/")
+            return ChatOllama(**kwargs)
 
         if self.backend == "openai":
             try:
@@ -291,12 +304,19 @@ def build_planner(prefer_llm: bool = True, verbose: bool = True):
 
     try:
         planner = LLMPlanner()
+        # Construction does not contact the backend -- ChatOllama and the
+        # hosted clients build happily against a server that is not there.
+        # Probe once, so a misconfigured or unreachable backend degrades
+        # loudly here rather than raising mid-scenario and failing a suite
+        # for a reason unrelated to what it is testing.
+        planner.plan("probe")
         if verbose:
             print(f"  Planner: {planner.name} via LangChain")
         return planner, True
-    except RuntimeError as e:
+    except Exception as e:
         if verbose:
-            print(f"  Planner: DeterministicPlanner — no model available ({e})")
+            detail = str(e).splitlines()[0][:110] if str(e) else type(e).__name__
+            print(f"  Planner: DeterministicPlanner — model unavailable ({detail})")
             print("  NOTE: this run is NOT model-driven. Set up a backend before")
             print("        citing it as an agentic-orchestration result.")
         return DeterministicPlanner(), False

@@ -59,6 +59,8 @@ class ErrorCode:
     INVALID_EPOCH = 6006            # 0x1776
     UNAUTHORIZED_ADMIN = 6007       # 0x1777
     INVALID_DENIAL_REASON = 6008    # 0x1778
+    UNAUTHORIZED_VERIFIER = 6009    # 0x1779
+    RING_TOO_SMALL = 6010           # 0x177a
 
 
 def load_program_id(anchor_toml_path: str = "Anchor.toml") -> Pubkey:
@@ -188,6 +190,78 @@ def ix_log_denial(program_id: Pubkey, worker: Pubkey, requester: Pubkey,
         AccountMeta(worker, True, True),
         AccountMeta(agent_pda(program_id, worker), False, False),
         AccountMeta(denial_log_pda(program_id, nd), False, True),
+        AccountMeta(SYS_PROGRAM_ID, False, False),
+    ]
+    return Instruction(program_id, data, accounts)
+
+
+# ----------------------------------------------------------------------
+# Group authentication PDAs and instructions.
+# ----------------------------------------------------------------------
+def group_ring_pda(program_id: Pubkey, group_id) -> Pubkey:
+    pda, _ = Pubkey.find_program_address([b"ring", bytes(group_id)], program_id)
+    return pda
+
+
+def group_access_pda(program_id: Pubkey, commitment) -> Pubkey:
+    pda, _ = Pubkey.find_program_address(
+        [b"group_access", bytes(commitment)], program_id)
+    return pda
+
+
+def trace_event_pda(program_id: Pubkey, group_id, action_hash_bytes,
+                    epoch: int) -> Pubkey:
+    pda, _ = Pubkey.find_program_address(
+        [b"trace_event", bytes(group_id), bytes(action_hash_bytes),
+         serialize_u64(epoch)], program_id)
+    return pda
+
+
+def ix_register_group_ring(program_id, admin, group_id, ring_hash_bytes,
+                           ring_size: int) -> Instruction:
+    data = (discriminator("register_group_ring")
+            + serialize_u8_array_32(group_id)
+            + serialize_u8_array_32(ring_hash_bytes)
+            + struct.pack("<H", ring_size))
+    accounts = [
+        AccountMeta(admin, True, True),
+        AccountMeta(config_pda(program_id), False, False),
+        AccountMeta(group_ring_pda(program_id, group_id), False, True),
+        AccountMeta(SYS_PROGRAM_ID, False, False),
+    ]
+    return Instruction(program_id, data, accounts)
+
+
+def ix_log_group_access(program_id, verifier, group_id, action_hash_bytes,
+                        commitment, epoch: int) -> Instruction:
+    data = (discriminator("log_group_access")
+            + serialize_u8_array_32(group_id)
+            + serialize_u8_array_32(action_hash_bytes)
+            + serialize_u8_array_32(commitment)
+            + serialize_u64(epoch))
+    accounts = [
+        AccountMeta(verifier, True, True),
+        AccountMeta(config_pda(program_id), False, False),
+        AccountMeta(policy_pda(program_id, group_id, action_hash_bytes), False, False),
+        AccountMeta(group_ring_pda(program_id, group_id), False, False),
+        AccountMeta(group_access_pda(program_id, commitment), False, True),
+        AccountMeta(SYS_PROGRAM_ID, False, False),
+    ]
+    return Instruction(program_id, data, accounts)
+
+
+def ix_log_traced_signer(program_id, verifier, group_id, action_hash_bytes,
+                         epoch: int, traced_agent: Pubkey) -> Instruction:
+    data = (discriminator("log_traced_signer")
+            + serialize_u8_array_32(group_id)
+            + serialize_u8_array_32(action_hash_bytes)
+            + serialize_u64(epoch)
+            + serialize_pubkey(traced_agent))
+    accounts = [
+        AccountMeta(verifier, True, True),
+        AccountMeta(config_pda(program_id), False, False),
+        AccountMeta(trace_event_pda(program_id, group_id, action_hash_bytes, epoch),
+                    False, True),
         AccountMeta(SYS_PROGRAM_ID, False, False),
     ]
     return Instruction(program_id, data, accounts)
@@ -366,14 +440,15 @@ def ix_log_access(program_id: Pubkey, agent: Pubkey, group_id, action_hash,
 #   AgentRecord:  agent_pubkey(32) + group_id(32) + active(1) + bump(1) = 66
 #   PolicyRecord: group_id(32) + action_hash(32) + allowed(1) + bump(1) = 66
 # ----------------------------------------------------------------------
-CONFIG_STRUCT = "<32sB"
+CONFIG_STRUCT = "<32s32sB"
 AGENT_RECORD_STRUCT = "<32s32s?B"
 POLICY_RECORD_STRUCT = "<32s32s?B"
 
 
 def parse_config(data: bytes) -> dict:
-    admin, bump = struct.unpack(CONFIG_STRUCT, data[:struct.calcsize(CONFIG_STRUCT)])
-    return {"admin": Pubkey(admin), "bump": bump}
+    admin, verifier, bump = struct.unpack(
+        CONFIG_STRUCT, data[:struct.calcsize(CONFIG_STRUCT)])
+    return {"admin": Pubkey(admin), "verifier": Pubkey(verifier), "bump": bump}
 
 
 def parse_agent_record(data: bytes) -> dict:
@@ -417,6 +492,10 @@ def classify_error(error: Exception) -> str:
         return "DENIED: Nullifier is not the correct derivation for this agent/action/epoch."
     if has("InvalidEpoch", ErrorCode.INVALID_EPOCH):
         return "DENIED: Epoch is not the current access epoch."
+    if has("UnauthorizedVerifier", ErrorCode.UNAUTHORIZED_VERIFIER):
+        return "DENIED: Signer is not the configured ring-signature verifier."
+    if has("RingTooSmall", ErrorCode.RING_TOO_SMALL):
+        return "DENIED: A ring needs at least two members to provide anonymity."
     if has("UnauthorizedAdmin", ErrorCode.UNAUTHORIZED_ADMIN):
         return "DENIED: Signer is not the configured protocol administrator."
     if has("AgentAlreadyRevoked", ErrorCode.AGENT_ALREADY_REVOKED):

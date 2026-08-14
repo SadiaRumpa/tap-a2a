@@ -1,0 +1,82 @@
+========================================================================
+TAP-A2A — GROUP AUTHENTICATION (TRACEABLE RING SIGNATURES)
+========================================================================
+Protocol already initialised (config A5cBnknUC6h24LYMpSXuuEvG9qmcwWdCF1BvXutyxzFP).
+Program: 7Bai6A8ANjhLcGHPWQXExAbPRYZ9jUxtFEzQq3FgDiDK
+
+  Ring published: 5 members, commitment on-chain
+  Group policy  : READ_DATABASE allowed
+  Verifier      : Cw92kFLvZfPKAoLAkKdyxfPqQQHqYCdKKR1MnogFMwLp (admin by default)
+
+========================================================================
+PART 1 — ANONYMOUS AUTHENTICATION
+========================================================================
+
+[1a] A member authenticates and the access is logged anonymously
+  PASS: anonymous_access — 121 bytes on-chain
+  PASS: signer_identity_not_on_chain — no ring member's key appears in the record
+
+[1b] A different member authenticates — still anonymous, unlinked
+  PASS: second_member_independent — traced as independent, not linked to the first
+
+========================================================================
+PART 2 — ONE-TIME USE AND TRACING
+========================================================================
+
+[2a] member_2 signs the SAME issue a second time
+  PASS: double_use_traced — identified index 2 (member_2 is index 2)
+
+[2b] The traced identity is published on-chain
+  PASS: trace_event_on_chain — identity now attributable and auditable
+
+[2c] member_2 signs a DIFFERENT issue — anonymity restored
+  PASS: different_issue_anonymous — a later epoch is a new issue, so single use is anonymous again
+
+========================================================================
+PART 3 — REFUSALS
+========================================================================
+
+[3a] A non-member cannot produce a valid signature
+  PASS: non_member_refused — membership cannot be asserted without a ring secret
+
+[3b] A substituted ring is refused
+  PASS: ring_substitution_refused — REFUSED: ring does not match the on-chain commitment
+
+[3c] An unauthorised submitter cannot write a group record
+  PASS: rogue_verifier_refused — DENIED: Signer is not the configured ring-signature verifier
+
+========================================================================
+RESULTS
+========================================================================
+  PASS  anonymous_access
+  PASS  signer_identity_not_on_chain
+  PASS  second_member_independent
+  PASS  double_use_traced
+  PASS  trace_event_on_chain
+  PASS  different_issue_anonymous
+  PASS  non_member_refused
+  PASS  ring_substitution_refused
+  PASS  rogue_verifier_refused
+
+9/9 checks passed.
+
+INTERPRETATION
+
+  A member proves group membership without revealing which member: the
+  on-chain record contains no agent key, only the group, the action, the
+  epoch and a commitment to the signature.
+
+  Acting twice under one issue forfeits that anonymity automatically. No
+  authority decides to reveal the signer and none can prevent it — the
+  identity falls out of comparing the two signatures, and the verifier
+  publishes it so the finding is auditable rather than private to the
+  verifier.
+
+  The cost is that one-time enforcement cannot be on-chain. An FS-TRS
+  signature yields no per-signer value extractable from one signature, so
+  the chain cannot deduplicate without learning who signed. This is a
+  property of the scheme, not of the implementation, and it is the reason
+  the deterministic-nullifier protocol remains the enforced path while
+  this one provides anonymity where that matters more.
+
+SUITE PASSED.

@@ -28,6 +28,8 @@ pub mod tap_a2a {
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let config = &mut ctx.accounts.config;
         config.admin = ctx.accounts.admin.key();
+        // The admin verifies by default; set_verifier delegates it.
+        config.verifier = ctx.accounts.admin.key();
         config.bump = ctx.bumps.config;
 
         msg!("TAP-A2A: initialised with admin {}", config.admin);
@@ -41,6 +43,14 @@ pub mod tap_a2a {
         config.admin = new_admin;
 
         msg!("TAP-A2A: admin transferred from {} to {}", previous, new_admin);
+        Ok(())
+    }
+
+    /// Delegate ring-signature verification to another key.
+    pub fn set_verifier(ctx: Context<SetAdmin>, new_verifier: Pubkey) -> Result<()> {
+        let config = &mut ctx.accounts.config;
+        config.verifier = new_verifier;
+        msg!("TAP-A2A: verifier set to {}", new_verifier);
         Ok(())
     }
 
@@ -258,6 +268,117 @@ pub mod tap_a2a {
         msg!("TAP-A2A: request REFUSED and logged. Reason code {}", reason);
         Ok(())
     }
+
+    // ====================================================================
+    // GROUP AUTHENTICATION
+    //
+    // An agent authenticates as A MEMBER OF A GROUP without revealing
+    // which member, using a Fujisaki-Suzuki traceable ring signature over
+    // the group's membership ring. Honest single use is anonymous; a
+    // second signature under the same issue identifies the signer.
+    //
+    // WHY VERIFICATION IS OFF-CHAIN, AND WHY THAT IS NOT A SHORTCUT.
+    // An FS-TRS signature yields no extractable per-signer value. Two
+    // signatures by the same member carry different tag lines that agree
+    // only at the signer's index, discoverable only by comparing the two.
+    // That is exactly what preserves anonymity -- and it means the chain
+    // cannot deduplicate a single signature without learning who signed.
+    // One-time enforcement therefore sits with the verifier, which holds
+    // the per-issue signature set; the chain records the anonymous access
+    // and, when the verifier detects double use, the identity it traced.
+    //
+    // The verifier is consequently trusted for liveness and for one-time
+    // enforcement. It is NOT trusted for authorisation: the policy check
+    // below is independent, and a verifier cannot manufacture access for a
+    // group that holds no policy.
+    // ====================================================================
+
+    /// Publish a group's membership ring as a commitment.
+    ///
+    /// The ring itself is distributed off-chain; only its hash is stored,
+    /// so on-chain cost is constant in group size. A verifier checks the
+    /// ring it was given hashes to this value before trusting a signature
+    /// over it -- otherwise an attacker could substitute a ring of one.
+    pub fn register_group_ring(
+        ctx: Context<RegisterGroupRing>,
+        agent_group_id: [u8; 32],
+        ring_hash: [u8; 32],
+        ring_size: u16,
+    ) -> Result<()> {
+        require!(ring_size >= 2, CustomError::RingTooSmall);
+
+        let ring = &mut ctx.accounts.group_ring;
+        ring.agent_group_id = agent_group_id;
+        ring.ring_hash = ring_hash;
+        ring.ring_size = ring_size;
+        ring.bump = ctx.bumps.group_ring;
+
+        msg!("TAP-A2A: group ring published, {} members", ring_size);
+        Ok(())
+    }
+
+    /// Record an ANONYMOUS access by an unidentified group member.
+    ///
+    /// Submitted by the verifier after it has checked the ring signature.
+    /// No agent public key is written: the record attests that SOME member
+    /// of the group exercised the capability, which is the whole point.
+    pub fn log_group_access(
+        ctx: Context<LogGroupAccess>,
+        agent_group_id: [u8; 32],
+        action_hash: [u8; 32],
+        signature_commitment: [u8; 32],
+        epoch: u64,
+    ) -> Result<()> {
+        let policy = &ctx.accounts.policy_record;
+        require!(policy.is_allowed, CustomError::PolicyDenied);
+
+        let now = Clock::get()?.unix_timestamp;
+        let current_epoch = (now / EPOCH_SECONDS) as u64;
+        require!(
+            epoch == current_epoch || epoch + 1 == current_epoch,
+            CustomError::InvalidEpoch
+        );
+
+        let rec = &mut ctx.accounts.group_access_log;
+        rec.agent_group_id = agent_group_id;
+        rec.action_hash = action_hash;
+        rec.signature_commitment = signature_commitment;
+        rec.epoch = epoch;
+        rec.timestamp = now;
+        rec.bump = ctx.bumps.group_access_log;
+
+        msg!("TAP-A2A: anonymous group access logged (signer not recorded)");
+        Ok(())
+    }
+
+    /// Record a signer IDENTIFIED by double use.
+    ///
+    /// The accountability half of the construction. Anonymity is forfeited
+    /// automatically, by the algebra, when a member signs the same issue
+    /// twice -- nobody is trusted to reveal them. The verifier publishes
+    /// the identity it traced so the finding is auditable rather than
+    /// merely known to the verifier.
+    ///
+    /// One record per (group, action, epoch): the first detection is what
+    /// is evidenced, and repeated detections cannot inflate the log.
+    pub fn log_traced_signer(
+        ctx: Context<LogTracedSigner>,
+        agent_group_id: [u8; 32],
+        action_hash: [u8; 32],
+        epoch: u64,
+        traced_agent: Pubkey,
+    ) -> Result<()> {
+        let rec = &mut ctx.accounts.trace_event;
+        rec.agent_group_id = agent_group_id;
+        rec.action_hash = action_hash;
+        rec.epoch = epoch;
+        rec.traced_agent = traced_agent;
+        rec.timestamp = Clock::get()?.unix_timestamp;
+        rec.bump = ctx.bumps.trace_event;
+
+        msg!("TAP-A2A: double-signing TRACED to {}", traced_agent);
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -463,6 +584,109 @@ pub struct LogDenial<'info> {
 }
 
 
+#[derive(Accounts)]
+#[instruction(agent_group_id: [u8; 32])]
+pub struct RegisterGroupRing<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump,
+        has_one = admin @ CustomError::UnauthorizedAdmin
+    )]
+    pub config: Account<'info, Config>,
+
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + GroupRing::INIT_SPACE,
+        seeds = [b"ring", agent_group_id.as_ref()],
+        bump
+    )]
+    pub group_ring: Account<'info, GroupRing>,
+
+    pub system_program: Program<'info, System>,
+}
+
+
+#[derive(Accounts)]
+#[instruction(agent_group_id: [u8; 32], action_hash: [u8; 32],
+              signature_commitment: [u8; 32])]
+pub struct LogGroupAccess<'info> {
+    /// The verifier that checked the ring signature. Pays for the record.
+    #[account(mut)]
+    pub verifier: Signer<'info>,
+
+    /// `has_one = verifier` is what stops any funded key from writing
+    /// anonymous access records: an unauthorised submitter could otherwise
+    /// fabricate evidence that a group had acted.
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump,
+        has_one = verifier @ CustomError::UnauthorizedVerifier
+    )]
+    pub config: Account<'info, Config>,
+
+    /// The group must actually hold the capability. This check is
+    /// independent of the verifier, so a compromised verifier still
+    /// cannot grant a group authority it was never given.
+    #[account(
+        seeds = [b"policy", agent_group_id.as_ref(), action_hash.as_ref()],
+        bump = policy_record.bump
+    )]
+    pub policy_record: Account<'info, PolicyRecord>,
+
+    #[account(
+        seeds = [b"ring", agent_group_id.as_ref()],
+        bump = group_ring.bump
+    )]
+    pub group_ring: Account<'info, GroupRing>,
+
+    /// Seeded by the signature commitment, so the same signature cannot be
+    /// replayed. It does NOT deduplicate a member across two different
+    /// signatures -- that is impossible without identifying them, and is
+    /// why one-time enforcement sits with the verifier.
+    #[account(
+        init,
+        payer = verifier,
+        space = 8 + GroupAccessLog::INIT_SPACE,
+        seeds = [b"group_access", signature_commitment.as_ref()],
+        bump
+    )]
+    pub group_access_log: Account<'info, GroupAccessLog>,
+
+    pub system_program: Program<'info, System>,
+}
+
+
+#[derive(Accounts)]
+#[instruction(agent_group_id: [u8; 32], action_hash: [u8; 32], epoch: u64)]
+pub struct LogTracedSigner<'info> {
+    #[account(mut)]
+    pub verifier: Signer<'info>,
+
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump,
+        has_one = verifier @ CustomError::UnauthorizedVerifier
+    )]
+    pub config: Account<'info, Config>,
+
+    #[account(
+        init,
+        payer = verifier,
+        space = 8 + TraceEvent::INIT_SPACE,
+        seeds = [b"trace_event", agent_group_id.as_ref(), action_hash.as_ref(),
+                 &epoch.to_le_bytes()],
+        bump
+    )]
+    pub trace_event: Account<'info, TraceEvent>,
+
+    pub system_program: Program<'info, System>,
+}
+
+
 // ============================================================================
 // DATA ACCOUNTS
 // ============================================================================
@@ -472,6 +696,10 @@ pub struct LogDenial<'info> {
 pub struct Config {
     /// The only key permitted to register, revoke, or author policy.
     pub admin: Pubkey,
+    /// The only key permitted to submit group-authentication records.
+    /// Separate from admin so the party that verifies ring signatures
+    /// need not also hold policy authority.
+    pub verifier: Pubkey,
     pub bump: u8,
 }
 
@@ -529,6 +757,46 @@ pub struct DenialLog {
 }
 
 
+/// Commitment to a group's membership ring. The ring itself lives
+/// off-chain; only its hash is stored, so cost is constant in group size.
+#[account]
+#[derive(InitSpace)]
+pub struct GroupRing {
+    pub agent_group_id: [u8; 32],
+    pub ring_hash: [u8; 32],
+    pub ring_size: u16,
+    pub bump: u8,
+}
+
+
+/// An access by an unidentified member of a group. Deliberately carries
+/// no agent public key: the record attests that SOME member acted.
+#[account]
+#[derive(InitSpace)]
+pub struct GroupAccessLog {
+    pub agent_group_id: [u8; 32],
+    pub action_hash: [u8; 32],
+    pub signature_commitment: [u8; 32],
+    pub epoch: u64,
+    pub timestamp: i64,
+    pub bump: u8,
+}
+
+
+/// A member identified by double use. Anonymity is forfeited by the
+/// algebra, not by anyone's decision to reveal it.
+#[account]
+#[derive(InitSpace)]
+pub struct TraceEvent {
+    pub agent_group_id: [u8; 32],
+    pub action_hash: [u8; 32],
+    pub epoch: u64,
+    pub traced_agent: Pubkey,
+    pub timestamp: i64,
+    pub bump: u8,
+}
+
+
 // ============================================================================
 // CUSTOM ERRORS
 // ============================================================================
@@ -565,4 +833,10 @@ pub enum CustomError {
 
     #[msg("Denial reason code is outside the defined range 1-7.")]
     InvalidDenialReason, // 6008
+
+    #[msg("Signer is not the configured ring-signature verifier.")]
+    UnauthorizedVerifier, // 6009
+
+    #[msg("A ring must contain at least two members to provide anonymity.")]
+    RingTooSmall, // 6010
 }

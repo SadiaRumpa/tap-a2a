@@ -174,6 +174,12 @@ else
     echo "  Tamarin does not build on all platforms. The committed results in"
     echo "  $RESULTS_DIR/ were produced with Tamarin 1.12 + Maude 3.1 on Linux;"
     echo "  verify_tap_a2a.py reproduces them anywhere tamarin-prover is on PATH."
+    # A formal_verification.txt left by an EARLIER run would sit beside
+    # the committed tamarin_results.txt and could contradict it -- two
+    # verification files disagreeing is worse than one. This stage did
+    # not run, so it must not leave output claiming it did.
+    rm -f "$RESULTS_DIR/formal_verification.txt"
+
     if [ -s "$RESULTS_DIR/tamarin_results.txt" ]; then
         skip "formal verification" "run on Linux; results committed in $RESULTS_DIR/tamarin_results.txt"
     else
@@ -216,6 +222,10 @@ record "audit trail + overhead" $?
 echo "[3e/5] Peer-to-peer agent communication..."
 python3 peer_scenario_runner.py > "$RESULTS_DIR/peer_scenario_results.txt" 2>&1
 record "peer-to-peer A2A" $?
+
+echo "[3f/5] Group authentication (traceable ring signatures)..."
+python3 group_scenario_runner.py > "$RESULTS_DIR/group_auth_results.txt" 2>&1
+record "group authentication" $?
 
 echo "[4/5] Agentic orchestration..."
 python3 agentic_orchestrator.py > "$RESULTS_DIR/agentic_orchestration_results.txt" 2>&1

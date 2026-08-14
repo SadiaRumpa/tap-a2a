@@ -57,7 +57,10 @@ echo "[4/4] Ensuring a fixed program identity..."
 # runs so the program ID stays stable — regenerating it on every run
 # would invalidate every previously recorded result.
 KEYPAIR="target/deploy/tap_a2a-keypair.json"
-KEYPAIR_BACKUP="$(mktemp -t tap_a2a_keypair)"
+# Plain mktemp, no -t template: GNU mktemp requires XXXXXX in a -t
+# template while BSD/macOS does not, so the templated form silently
+# failed on Linux and cargo clean then destroyed the program keypair.
+KEYPAIR_BACKUP="$(mktemp)"
 
 if [ -f "$KEYPAIR" ]; then
     cp "$KEYPAIR" "$KEYPAIR_BACKUP"
@@ -80,6 +83,13 @@ fi
 rm -f "$KEYPAIR_BACKUP"
 rm -f target/deploy/tap_a2a.so
 
+if [ ! -s "$KEYPAIR" ]; then
+    echo "ERROR: $KEYPAIR is missing or empty after the clean step."
+    echo "  If it is tracked in git:  git checkout -- $KEYPAIR"
+    echo "  Otherwise:                solana-keygen new --no-passphrase -o $KEYPAIR"
+    echo "  (generating a new one changes the program ID, so prefer restoring)"
+    exit 1
+fi
 echo "Program ID: $(solana address -k "$KEYPAIR")"
 
 echo ""

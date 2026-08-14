@@ -1,4 +1,26 @@
+"""
+TAP-A2A Security Scenario Runner
 
+Exercises every class of denial the on-chain program enforces and
+reports a hard PASS/FAIL count. Exits non-zero if any scenario fails,
+so the evaluation pipeline cannot report success on a broken run.
+
+CHANGED IN THIS REVISION
+------------------------
+- Exits non-zero on failure (previously always exited 0, and the shell
+  scripts decided success by grepping for the string "SUCCESS", which
+  matched even if only one of six scenarios passed).
+- Denials are checked for the RIGHT reason, not merely for throwing.
+- Added scenario 6: nullifier forgery. This is the scenario that
+  actually tests traceability -- an agent supplying a random nullifier
+  instead of the correct derivation. Under the previous program this
+  attack SUCCEEDED silently, because the nullifier was never verified
+  on-chain, which meant the old "replay" scenario was testing a
+  strawman (an adversary who resubmits identical bytes).
+- Added scenario 7: unauthorised admin. Under the previous program any
+  funded keypair could register agents, author policy and revoke
+  agents, because nothing constrained who `admin` was.
+"""
 import asyncio
 import sys
 
@@ -6,8 +28,8 @@ from solders.keypair import Keypair
 
 from tap_a2a_common import (
     load_program_id, generate_bytes32, current_epoch,
-    access_nullifier, agent_pda, ix_register_agent, ix_set_policy,
-    ix_update_policy, ix_revoke_agent, ix_log_access,
+    ix_register_agent, ix_set_policy, ix_update_policy,
+    ix_revoke_agent, ix_log_access,
 )
 from tap_a2a_client import rpc_client, load_admin, send, ensure_initialized, airdrop, expect_denied, sync_clock
 
